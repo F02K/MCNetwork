@@ -1,15 +1,15 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "jars": {
     "paper": {
       "file": "mcnetwork-agent-paper.jar",
-      "size": 23633,
-      "sha256": "819a2cf66901ef4b5e103c74ecfc00004f48f05ff73c34c37ffae6a2b7197f6e"
+      "size": 27416,
+      "sha256": "351758e06c5f6cafb6e6a14bbcf0d1ea16ac527ab59664f77f1ea2e077cb1af8"
     },
     "velocity": {
       "file": "mcnetwork-agent-velocity.jar",
-      "size": 24846,
-      "sha256": "7d2c5a4dc55a724506f5a035a43e4e0bdc9d2092b69c41dafab1b069000f1dc4"
+      "size": 30299,
+      "sha256": "473b90233ea6b8935abc9ecd00b3eb3d55715b76143f94bbe12d5dbf07be137b"
     }
   }
 }

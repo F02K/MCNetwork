@@ -1,7 +1,10 @@
 package dev.mcnetwork.agent.velocity;
 
 import com.google.inject.Inject;
+import com.velocitypowered.api.event.PostOrder;
 import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.connection.DisconnectEvent;
+import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
@@ -14,6 +17,7 @@ import dev.mcnetwork.agent.AgentConfig;
 import dev.mcnetwork.agent.AgentLog;
 import dev.mcnetwork.agent.JvmMetrics;
 import dev.mcnetwork.agent.Reporter;
+import dev.mcnetwork.agent.WakeTracker;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -27,12 +31,15 @@ import org.slf4j.Logger;
  * Proxy side of MCNetwork: reports JVM memory and the players per server, and moves players to
  * another server when the daemon asks (so a game server can restart without kicking anybody).
  */
-@Plugin(id = "mcnetwork-agent", name = "MCNetworkAgent", version = "0.1.0", authors = {"MCNetwork"})
+@Plugin(id = "mcnetwork-agent", name = "MCNetworkAgent", version = "0.2.0", authors = {"MCNetwork"})
 public final class VelocityAgent {
     private final ProxyServer proxy;
     private final Logger logger;
     private final Path dataDirectory;
+    private static final long WAIT_LIMIT_MS = 5 * 60_000L;
     private Reporter reporter;
+    /** Players waiting for a server that the daemon stopped for being idle and is starting again. */
+    private final WakeTracker<Player> wake = new WakeTracker<>();
 
     @Inject
     public VelocityAgent(ProxyServer proxy, Logger logger, @DataDirectory Path dataDirectory) {
@@ -63,6 +70,7 @@ public final class VelocityAgent {
         };
         String version = proxy.getPluginManager().getPlugin("mcnetwork-agent").flatMap(p -> p.getDescription().getVersion()).orElse("unknown");
         reporter = new Reporter(config, "velocity", version, this::stats, this::run, log);
+        reporter.onResponse(this::onResponse);
         reporter.start();
         logger.info("Reporting to {} as \"{}\" every {} s.", config.url, config.serverId, config.intervalSeconds);
     }
@@ -72,7 +80,43 @@ public final class VelocityAgent {
         if (reporter != null) reporter.stop();
     }
 
+    /** A player wants a server that is asleep: hold them, the daemon starts it, and they are connected when it is ready. */
+    @Subscribe(order = PostOrder.FIRST)
+    public void onPreConnect(ServerPreConnectEvent event) {
+        String name = event.getOriginalServer().getServerInfo().getName();
+        if (!wake.isSleeping(name)) return;
+        event.setResult(ServerPreConnectEvent.ServerResult.denied());
+        wake.hold(name, event.getPlayer(), System.currentTimeMillis());
+        event.getPlayer().sendMessage(Component.text(name + " is starting up. You will be connected as soon as it is ready."));
+    }
+
+    @Subscribe
+    public void onDisconnect(DisconnectEvent event) {
+        wake.forget(event.getPlayer());
+    }
+
+    private static List<String> names(Object o) {
+        List<String> out = new ArrayList<>();
+        if (o instanceof List<?> list) for (Object x : list) if (x instanceof String s) out.add(s);
+        return out;
+    }
+
+    /** The daemon's answer says which servers sleep and which woke up: send the waiting players on. */
+    private void onResponse(Map<?, ?> response) {
+        Map<String, List<Player>> ready = wake.update(names(response.get("sleeping")), names(response.get("awake")));
+        for (Map.Entry<String, List<Player>> e : ready.entrySet()) {
+            proxy.getServer(e.getKey()).ifPresent(server -> {
+                for (Player p : e.getValue()) {
+                    if (!p.isActive()) continue;
+                    p.sendMessage(Component.text(e.getKey() + " is ready. Connecting you now."));
+                    p.createConnectionRequest(server).fireAndForget();
+                }
+            });
+        }
+    }
+
     private Map<String, Object> stats() {
+        for (Player p : wake.expire(System.currentTimeMillis(), WAIT_LIMIT_MS)) p.sendMessage(Component.text("The server did not start in time. Please try again later."));
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("players", proxy.getPlayerCount());
         p.put("version", proxy.getVersion().getVersion());
@@ -84,6 +128,7 @@ public final class VelocityAgent {
             servers.add(m);
         }
         p.put("servers", servers);
+        p.put("wakeRequests", wake.wakeRequests());
         return Map.of("proxy", p);
     }
 

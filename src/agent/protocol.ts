@@ -37,6 +37,8 @@ export interface AgentProxy {
   players: number;
   version: string;
   servers: { name: string; players: number }[];
+  /** Servers players tried to join while they were asleep (agent 0.2.0 and newer). */
+  wakeRequests: string[];
 }
 
 export interface CommandResult {
@@ -121,6 +123,7 @@ function parseProxy(raw: unknown): AgentProxy {
   return {
     players: num(p.players, 'proxy.players'),
     version: text(p.version ?? '', 'proxy.version'),
+    wakeRequests: (Array.isArray(p.wakeRequests) ? p.wakeRequests.slice(0, 20) : []).map((n, i) => text(n, `proxy.wakeRequests[${i}]`, 32)),
     servers: servers.map((s, i) => {
       const o = obj(s, `proxy.servers[${i}]`);
       return { name: text(o.name, 'server name'), players: num(o.players, 'server players') };

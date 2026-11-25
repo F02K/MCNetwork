@@ -88,6 +88,7 @@ export function connectEvents() {
   });
   on('pressure', () => emit('ram'));
   on('servers', () => refreshNetwork().catch(() => undefined));
+  on('autopilot', (e) => emit('autopilot', e));
   on('setup', (state) => {
     store.setup = state;
     emit('setup');

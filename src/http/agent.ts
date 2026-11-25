@@ -23,5 +23,7 @@ export async function handleAgentReport(net: Network, req: IncomingMessage): Pro
     throw err;
   }
   if (!net.config.servers.some((s) => s.id === report.serverId)) throw new HttpError(404, `This network has no server "${report.serverId}"`);
-  return { ok: true, commands: net.agents.submit(report) };
+  const commands = net.agents.submit(report);
+  for (const name of report.proxy?.wakeRequests ?? []) void net.autopilot.wake(name).catch(() => undefined); // a player wants a sleeping server
+  return { ok: true, commands, ...net.autopilot.lists() };
 }

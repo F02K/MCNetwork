@@ -14,6 +14,8 @@ import { readSystemMemory, type Pressure, type SystemMemory } from './ram/system
 import { RamTracker, type RamFrame } from './ram/tracker';
 import { isListening } from './setup/probe';
 import { PortAccess, type PortTools } from './ports/access';
+import { Autopilot, type AutopilotOptions } from './autopilot/engine';
+import { validateAutopilot } from './config';
 import { proxyOf, writeProxyConfig } from './setup/layout';
 import { SetupRunner, type SetupOptions } from './setup/provision';
 import type { NetworkConfig, ServerConfig } from './types';
@@ -26,6 +28,8 @@ export interface NetworkOptions {
   instance?: Partial<InstanceOptions>;
   systemMemory?: () => SystemMemory;
   setup?: SetupOptions;
+  /** Test hooks for the autopilot (clock, rate limit). */
+  autopilot?: AutopilotOptions;
   /** Test hooks for UPnP, firewall detection and the reachability check. */
   portTools?: PortTools;
   /** Folder with the agent plugin jars and manifest.json (default: ../agent/jars next to the bundle). */
@@ -108,6 +112,7 @@ export class Network extends EventEmitter {
   readonly setup: SetupRunner;
   readonly agents = new AgentStore();
   readonly access: PortAccess;
+  readonly autopilot: Autopilot;
   /** Where the plugins reach this daemon; set once the HTTP server listens. */
   daemonUrl = '';
   private agentErrors = new Map<string, string>();
@@ -124,6 +129,8 @@ export class Network extends EventEmitter {
     this.readMemory = opts.systemMemory ?? readSystemMemory;
     this.tracker.load(join(dataDir, HISTORY_FILE));
     this.access = new PortAccess(this, opts.portTools);
+    this.autopilot = new Autopilot(this, opts.autopilot);
+    this.autopilot.on('event', (e) => this.emit('autopilot', e));
     this.setup = new SetupRunner(this, opts.setup);
     this.setup.on('change', (state) => this.emit('setup', state));
     this.agents.on('report', (r: { serverId: string }) => {
@@ -145,6 +152,7 @@ export class Network extends EventEmitter {
       if (s.autoStart) await this.startServer(s.id).catch(() => undefined);
     }
     void this.access.start();
+    this.autopilot.start();
     this.sampleRam();
     this.sampleTimer = setInterval(() => this.sampleRam(), this.config.ram.sampleSeconds * 1000);
     this.saveTimer = setInterval(() => this.saveHistory(), 60_000);
@@ -161,6 +169,7 @@ export class Network extends EventEmitter {
     for (const role of ['proxy', 'backend'] as const) {
       await Promise.all(order.filter((s) => s.role === role).map(async (s) => this.instances.get(s.id)?.disconnect()));
     }
+    this.autopilot.stop();
     await this.access.stop();
     await this.util?.disconnect();
     this.saveHistory();
@@ -226,7 +235,7 @@ export class Network extends EventEmitter {
     if (software && software !== 'paper' && software !== 'velocity') throw new Error(`The agent plugin needs Paper or Velocity (this is ${software})`);
     if (!this.config.agent.enabled) throw new Error('The agent plugins are switched off (agent.enabled)');
     if (!this.daemonUrl) throw new Error('The daemon does not know its own address yet');
-    const result = installAgent(resolveServerDir(this.dataDir, cfg), cfg.role, this.agentJarsDir, { url: this.daemonUrl, token: this.config.agent.token, serverId: id, intervalSeconds: Math.min(30, this.config.ram.sampleSeconds) });
+    const result = installAgent(resolveServerDir(this.dataDir, cfg), cfg.role, this.agentJarsDir, { url: this.daemonUrl, token: this.config.agent.token, serverId: id, intervalSeconds: cfg.role === 'proxy' ? 3 : Math.min(30, this.config.ram.sampleSeconds) }); // the proxy answers waiting players, so it reports often
     this.agentErrors.delete(id);
     return result;
   }
@@ -326,6 +335,17 @@ export class Network extends EventEmitter {
     await this.syncProxy();
     this.emit('servers');
     return this.view(id);
+  }
+
+  /** Changes autopilot settings (any subset), saves them and applies the new interval. */
+  updateAutopilot(patch: Record<string, unknown>): Network['config']['autopilot'] {
+    const allowed = Object.keys(this.config.autopilot);
+    const unknown = Object.keys(patch).filter((k) => !allowed.includes(k));
+    if (unknown.length) throw new Error(`Unknown autopilot setting: ${unknown.join(', ')}`);
+    this.config.autopilot = validateAutopilot({ ...this.config.autopilot, ...patch });
+    saveConfig(this.dataDir, this.config);
+    this.autopilot.schedule();
+    return this.config.autopilot;
   }
 
   /** Asks whoever runs the daemon to stop it gracefully (the 'shutdown' event); used by the HTTP API for service managers. */

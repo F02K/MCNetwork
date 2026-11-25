@@ -37,6 +37,7 @@ function stream(net: Network, req: IncomingMessage, res: ServerResponse): void {
     ['servers', () => write('servers', net.views().map((v) => v.config))],
     ['setup', (s: unknown) => write('setup', s)],
     ['agent', (a: unknown) => write('agent', a)],
+    ['autopilot', (e: unknown) => write('autopilot', e)],
   ];
   for (const [name, fn] of handlers) net.on(name, fn);
   write('hello', { servers: net.views().length });

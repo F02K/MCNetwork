@@ -142,4 +142,33 @@ class ReporterTest {
         assertEquals(2, gc.length);
         assertTrue(gc[0] > 0 && gc[1] > 0);
     }
+
+    @Test
+    void passesTheWholeAnswerToTheListenerBeforeRunningOrders() {
+        answer = "{\"commands\":[{\"id\":\"c1\",\"type\":\"gc\"}],\"sleeping\":[\"survival\"],\"awake\":[\"creative\"]}";
+        List<String> seen = new ArrayList<>();
+        Reporter r = reporter(c -> {
+            seen.add("command");
+            return "";
+        });
+        r.onResponse(m -> seen.add("sleeping=" + m.get("sleeping") + " awake=" + m.get("awake")));
+        r.tick();
+        assertEquals(List.of("sleeping=[survival] awake=[creative]", "command"), seen);
+    }
+
+    @Test
+    void aBrokenListenerDoesNotStopTheOrders() {
+        answer = "{\"commands\":[{\"id\":\"c1\",\"type\":\"gc\"}]}";
+        List<String> seen = new ArrayList<>();
+        Reporter r = reporter(c -> {
+            seen.add(c.type);
+            return "";
+        });
+        r.onResponse(m -> {
+            throw new IllegalStateException("oops");
+        });
+        r.tick();
+        assertEquals(List.of("gc"), seen);
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("oops")));
+    }
 }

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { resolveConfigured } from './appdir';
-import type { MemorySettings, NetworkConfig, ServerConfig } from './types';
+import type { AutopilotConfig, MemorySettings, NetworkConfig, ServerConfig } from './types';
 
 export const CONFIG_FILE = 'mcnetwork.json';
 export const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -16,6 +16,7 @@ export function defaultConfig(): NetworkConfig {
     ram: { totalMb: 0, reserveMb: 0, sampleSeconds: 10 },
     agent: { enabled: true, token: randomBytes(24).toString('hex') },
     ports: { upnp: false },
+    autopilot: { enabled: false, dryRun: true, intervalSeconds: 30, gcOnPressure: true, stopIdle: false, idleMinutes: 15, wakeOnDemand: true, restartOnLeak: false },
     servers: [],
   };
 }
@@ -76,6 +77,16 @@ export function validateServer(input: unknown, dataDir: string): ServerConfig {
   return out;
 }
 
+/** Checks the autopilot settings; throws an Error that names the problem. */
+export function validateAutopilot(a: Record<string, unknown>): AutopilotConfig {
+  for (const key of ['enabled', 'dryRun', 'gcOnPressure', 'stopIdle', 'wakeOnDemand', 'restartOnLeak']) {
+    if (typeof a[key] !== 'boolean') throw new Error(`autopilot.${key} must be true or false`);
+  }
+  num(a.intervalSeconds, 'autopilot.intervalSeconds', 1);
+  num(a.idleMinutes, 'autopilot.idleMinutes', 1);
+  return a as unknown as AutopilotConfig;
+}
+
 /** Reads and validates the configuration; a missing file gives the defaults. */
 export function loadConfig(dataDir: string): NetworkConfig {
   const file = join(dataDir, CONFIG_FILE);
@@ -94,6 +105,7 @@ export function loadConfig(dataDir: string): NetworkConfig {
   if (typeof agent.token !== 'string' || !agent.token) agent.token = base.agent.token; // a missing token is generated (and saved on start)
   const ports = { ...base.ports, ...(raw.ports as object | undefined) };
   if (typeof ports.upnp !== 'boolean') throw new Error('ports.upnp must be true or false');
+  const autopilot = validateAutopilot({ ...base.autopilot, ...(raw.autopilot as object | undefined) });
   num(http.port, 'http.port', 0);
   num(ram.totalMb, 'ram.totalMb');
   num(ram.reserveMb, 'ram.reserveMb');
@@ -105,7 +117,7 @@ export function loadConfig(dataDir: string): NetworkConfig {
     if (ids.has(s.id)) throw new Error(`Duplicate server id "${s.id}"`);
     ids.add(s.id);
   }
-  const cfg: NetworkConfig = { mcliPath: typeof raw.mcliPath === 'string' && raw.mcliPath ? raw.mcliPath : base.mcliPath, http, ram, agent, ports, servers };
+  const cfg: NetworkConfig = { mcliPath: typeof raw.mcliPath === 'string' && raw.mcliPath ? raw.mcliPath : base.mcliPath, http, ram, agent, ports, autopilot, servers };
   if (!isLoopback(cfg.http.host) && !cfg.http.token) throw new Error('http.token is required when http.host is not a loopback address');
   return cfg;
 }

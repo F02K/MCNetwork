@@ -70,6 +70,9 @@ export function buildRoutes(net: Network): Route[] {
         }),
     },
 
+    { method: 'GET', path: '/api/autopilot', handler: () => net.autopilot.state() },
+    { method: 'PUT', path: '/api/autopilot', handler: ({ body }) => guarded(() => net.updateAutopilot(body)) },
+    { method: 'POST', path: '/api/autopilot/wake', handler: ({ body }) => guarded(async () => ({ started: await net.autopilot.wake(str(body, 'server')) })) },
     { method: 'POST', path: '/api/shutdown', handler: () => (net.requestShutdown(), { stopping: true }) },
     { method: 'GET', path: '/api/ports', handler: () => guarded(() => portOverview(net)) },
     {

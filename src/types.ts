@@ -62,6 +62,24 @@ export interface PortsConfig {
   upnp: boolean;
 }
 
+export interface AutopilotConfig {
+  /** Master switch. Off by default: nothing happens on its own. */
+  enabled: boolean;
+  /** Only write down what would be done (the default, so that switching it on is safe). */
+  dryRun: boolean;
+  /** Seconds between checks. */
+  intervalSeconds: number;
+  /** When memory gets tight, ask the servers to free memory (garbage collection). */
+  gcOnPressure: boolean;
+  /** Stop game servers that have been empty for a while (never the join-first server, never one with players). */
+  stopIdle: boolean;
+  idleMinutes: number;
+  /** A player who wants to join a stopped server starts it and is connected as soon as it is ready (needs the proxy plugin). */
+  wakeOnDemand: boolean;
+  /** Restart a server whose memory need keeps growing for hours, when nobody is on it. */
+  restartOnLeak: boolean;
+}
+
 export interface NetworkConfig {
   /** Path to mcli.js (relative paths are resolved against the data directory). */
   mcliPath: string;
@@ -69,5 +87,6 @@ export interface NetworkConfig {
   ram: RamConfig;
   agent: AgentConfigSettings;
   ports: PortsConfig;
+  autopilot: AutopilotConfig;
   servers: ServerConfig[];
 }

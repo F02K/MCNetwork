@@ -24,6 +24,11 @@ public final class Reporter {
     /** What the plugin adds to the report besides the JVM data, e.g. {"game": {...}} or {"proxy": {...}}. */
     public interface Stats extends Supplier<Map<String, Object>> {}
 
+    /** Gets the whole answer of the daemon (besides the orders), e.g. which servers sleep. */
+    public interface ResponseListener {
+        void onResponse(Map<?, ?> response);
+    }
+
     private final AgentConfig config;
     private final String kind;
     private final String version;
@@ -34,6 +39,7 @@ public final class Reporter {
     private ScheduledExecutorService executor;
     private boolean connected = true; // starts true so that the first failure is reported
     private boolean unauthorized;
+    private ResponseListener listener;
     private final List<Map<String, Object>> results = new ArrayList<>();
 
     public Reporter(AgentConfig config, String kind, String version, Stats stats, CommandHandler handler, AgentLog log) {
@@ -43,6 +49,11 @@ public final class Reporter {
         this.stats = stats;
         this.handler = handler;
         this.log = log;
+    }
+
+    /** Optional: called with every readable answer, before its orders are carried out. */
+    public void onResponse(ResponseListener l) {
+        this.listener = l;
     }
 
     public void start() {
@@ -113,7 +124,15 @@ public final class Reporter {
             log.warn("Unreadable answer from the daemon: " + e.getMessage());
             return;
         }
-        if (!(parsed instanceof Map<?, ?> map) || !(map.get("commands") instanceof List<?> commands)) return;
+        if (!(parsed instanceof Map<?, ?> map)) return;
+        if (listener != null) {
+            try {
+                listener.onResponse(map);
+            } catch (RuntimeException e) {
+                log.warn("Could not use the daemon's answer: " + e.getMessage());
+            }
+        }
+        if (!(map.get("commands") instanceof List<?> commands)) return;
         for (Object raw : commands) {
             if (!(raw instanceof Map<?, ?> c)) continue;
             @SuppressWarnings("unchecked")

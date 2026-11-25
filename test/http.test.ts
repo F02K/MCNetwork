@@ -174,7 +174,7 @@ describe('HTTP API', () => {
 
     const first = await send(AGENT_TOKEN, report);
     assert.equal(first.status, 200);
-    assert.deepEqual(await first.json(), { ok: true, commands: [] });
+    assert.deepEqual(await first.json(), { ok: true, commands: [], sleeping: [], awake: [] });
 
     // the dashboard asks for a gc; the agent gets it with its next report and reports the outcome after that
     const order = (await call('POST', '/api/servers/lobby/gc')).json as { id: string };
