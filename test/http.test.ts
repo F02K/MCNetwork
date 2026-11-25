@@ -144,4 +144,21 @@ describe('HTTP API', () => {
     assert.equal(bad.status, 400);
     assert.match((bad.json as { error: string }).error, /EULA/);
   });
+
+  it('updates a server and previews a RAM plan', async () => {
+    const put = await call('PUT', '/api/servers/lobby', { name: 'Hub', memory: { weight: 3 } });
+    assert.equal(put.status, 200);
+    assert.equal((put.json as { config: { name: string } }).config.name, 'Hub');
+    assert.equal((await call('PUT', '/api/servers/lobby', { id: 'x' })).status, 400);
+    const preview = (await call('POST', '/api/ram/plan/preview', { servers: [{ id: 'a' }, { id: 'b', memory: { weight: 8 } }] })).json as { allocations: { id: string }[] };
+    assert.deepEqual(preview.allocations.map((a) => a.id), ['a', 'b']);
+    assert.equal((await call('POST', '/api/ram/plan/preview', { servers: 5 })).status, 400);
+  });
+
+  it('changes the RAM reserve', async () => {
+    const ok = await call('PUT', '/api/ram/config', { reserveMb: 3000 });
+    assert.deepEqual(ok.json, { totalMb: 0, reserveMb: 3000 });
+    assert.equal((await call('PUT', '/api/ram/config', { reserveMb: 'lots' })).status, 400);
+    await call('PUT', '/api/ram/config', { reserveMb: 0 });
+  });
 });

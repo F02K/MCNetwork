@@ -31,6 +31,16 @@ export default tseslint.config(
     },
   },
   {
+    // the dashboard: plain browser JavaScript without a build step
+    files: ['web/**/*.js'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      sourceType: 'module',
+      globals: Object.fromEntries(['window', 'document', 'localStorage', 'fetch', 'EventSource', 'location', 'navigator', 'matchMedia', 'setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', 'Event', 'Node', 'URL', 'console', 'Number'].map((g) => [g, 'readonly'])),
+    },
+    rules: { ...tseslint.configs.disableTypeChecked.rules, '@typescript-eslint/no-unused-vars': 'off', 'no-unused-vars': ['error', { argsIgnorePattern: '^_' }], eqeqeq: ['error', 'always'], 'prefer-const': 'error' },
+  },
+  {
     files: ['scripts/**/*.mjs', 'eslint.config.mjs'],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: { globals: { process: 'readonly', console: 'readonly' } },

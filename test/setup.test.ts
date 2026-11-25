@@ -156,3 +156,27 @@ describe('proxy sync', () => {
     assert.equal(await n.syncProxy(), false);
   });
 });
+
+describe('adding game servers to an existing network', () => {
+  it('installs only the new servers and tells the running proxy about them', async () => {
+    const { net: n, dir } = net();
+    await n.start();
+    n.setup.start(request());
+    await finished(n);
+    assert.equal(n.setup.state?.status, 'done', n.setup.state?.error ?? '');
+    await waitFor(() => n.views().every((v) => v.status?.state === 'running'), 5000, 'everything running');
+
+    n.setup.start({ backends: [{ id: 'creative', entry: false }], acceptEula: true });
+    await finished(n);
+    const state = n.setup.state;
+    assert.equal(state.status, 'done', state.error ?? '');
+    assert.deepEqual(state.steps.map((s) => s.id).filter((id) => id.startsWith('install:')), ['install:creative']);
+    assert.equal(n.config.servers.find((s) => s.id === 'creative')?.port, 30068);
+    assert.equal(n.config.servers.filter((s) => s.role === 'proxy').length, 1);
+    assert.match(read(dir, 'servers', 'proxy', 'velocity.toml'), /^creative = "127\.0\.0\.1:30068"$/m);
+    assert.match(read(dir, 'servers', 'proxy', 'commands.log'), /velocity reload/);
+    assert.equal(n.config.servers.filter((s) => s.entry).length, 1, 'still exactly one entry server');
+    await waitFor(() => n.view('creative').status?.state === 'running', 5000, 'new server running');
+  });
+});
+

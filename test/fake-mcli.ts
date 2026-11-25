@@ -31,6 +31,9 @@ const setState = (s: string) => {
   out({ event: 'state', data: { state } });
 };
 
+/** Constant for tests; FAKE_WOBBLE makes it move so charts have something to show. */
+const rss = () => (process.env.FAKE_WOBBLE ? (700 + 350 * Math.sin(Date.now() / 20000 + (process.pid % 7)) + (process.pid % 5) * 200) * MB : 600 * MB);
+
 const status = () => ({
   mcli: 'fake',
   protocol: 1,
@@ -42,7 +45,7 @@ const status = () => ({
   restarts: 0,
   software: { type: 'paper', version: '1.21.8', jar: 'paper.jar', build: '60' },
   java: 'java',
-  memory: { min, max, systemTotal: 8 * 1024 * MB, time: Date.now(), sysCpu: 1, sysMemPercent: 10, procRss: state === 'stopped' ? 0 : 600 * MB, procCpu: 2 },
+  memory: { min, max, systemTotal: 8 * 1024 * MB, time: Date.now(), sysCpu: 1, sysMemPercent: 10, procRss: state === 'stopped' ? 0 : rss(), procCpu: 2 },
   players: { count: players.size, max: 20, online: [...players].map((name) => ({ name, since: 0 })) },
   health: { reachable: state === 'running' ? true : null },
   problems: [],

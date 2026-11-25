@@ -63,14 +63,14 @@ export function paperSupported(version: string): boolean {
 }
 
 /** Checks the wizard input; throws an Error that tells the user what to change. */
-export function parseSetupRequest(input: unknown, existingIds: string[]): SetupRequest {
+export function parseSetupRequest(input: unknown, existingIds: string[], hasProxy = false): SetupRequest {
   const body = obj(input, 'request');
   if (body.acceptEula !== true) throw new Error('The Minecraft EULA (https://aka.ms/MinecraftEULA) must be accepted to set up game servers');
   const proxy = obj(body.proxy ?? {}, 'proxy');
   const port = proxy.port === undefined ? undefined : proxy.port;
   if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535)) throw new Error('"proxy.port" must be a whole number from 1 to 65535');
   if (!Array.isArray(body.backends) || !body.backends.length) throw new Error('Add at least one game server');
-  const seen = new Set<string>(['proxy']);
+  const seen = new Set<string>(hasProxy ? [] : ['proxy']);
   const backends = body.backends.map((raw, i): SetupBackend => {
     const b = obj(raw, `backends[${i}]`);
     if (typeof b.id !== 'string' || !ID_RE.test(b.id)) throw new Error(`backends[${i}].id must be 1-32 characters: lowercase letters, digits, "-" or "_"`);
@@ -123,8 +123,9 @@ export class SetupRunner extends EventEmitter {
   /** Validates the request and starts the job in the background. */
   start(input: unknown): SetupState {
     if (this.running) throw new Error('A setup is already running');
-    const req = parseSetupRequest(input, this.net.config.servers.map((s) => s.id));
-    const ids = ['proxy', ...req.backends.map((b) => b.id)];
+    const hasProxy = proxyOf(this.net.config) !== undefined;
+    const req = parseSetupRequest(input, this.net.config.servers.map((s) => s.id), hasProxy);
+    const ids = [...(hasProxy ? [] : ['proxy']), ...req.backends.map((b) => b.id)];
     const steps: SetupStep[] = [
       { id: 'create', label: 'Create the servers', status: 'pending' },
       { id: 'ram', label: 'Plan the RAM', status: 'pending' },
@@ -175,12 +176,15 @@ export class SetupRunner extends EventEmitter {
     await this.step('create', async () => {
       const taken = [...net.config.servers.flatMap((s) => (s.port ? [s.port] : [])), proxyPort];
       const ports = await allocatePorts(req.backends.length, taken, undefined, this.opts.isPortFree);
-      await net.addServer({ id: 'proxy', name: 'Proxy', role: 'proxy', port: proxyPort });
-      const entry = req.backends.some((b) => b.entry) ? undefined : req.backends[0].id;
+      const hasProxy = proxyOf(net.config) !== undefined;
+      if (!hasProxy) await net.addServer({ id: 'proxy', name: 'Proxy', role: 'proxy', port: proxyPort });
+      // somebody has to be the first stop for players: the chosen server, else the first new one if none exists yet
+      const hasEntry = net.config.servers.some((s) => s.entry);
+      const entry = req.backends.some((b) => b.entry) || hasEntry ? undefined : req.backends[0].id;
       for (const [i, b] of req.backends.entries()) {
         await net.addServer({ id: b.id, name: b.name ?? b.id, role: 'backend', port: ports[i], memory: b.memory, entry: b.entry || b.id === entry || undefined });
       }
-      configured.push(...net.config.servers.filter((s) => s.id === 'proxy' || req.backends.some((b) => b.id === s.id)));
+      configured.push(...net.config.servers.filter((s) => (s.role === 'proxy' && !hasProxy) || req.backends.some((b) => b.id === s.id)));
       return `${configured.length} servers`;
     });
     if (req.ram?.reserveMb !== undefined) net.config.ram.reserveMb = req.ram.reserveMb;
@@ -215,14 +219,15 @@ export class SetupRunner extends EventEmitter {
       });
     }
 
-    await this.step('connect', () => {
+    await this.step('connect', async () => {
       const proxy = proxyOf(net.config) as ServerConfig;
       const secret = readForwardingSecret(net.dataDir, proxy);
       if (!secret) throw new Error('Velocity did not create forwarding.secret');
       for (const s of configured.filter((c) => c.role === 'backend')) {
         if (!writeBackendForwarding(resolveServerDir(net.dataDir, s), secret)) throw new Error(`"${s.id}" did not create ${PAPER_GLOBAL}`);
       }
-      writeProxyConfig(net.dataDir, net.config, { bind: `0.0.0.0:${proxyPort}`, motd: req.proxy.motd, forwardingMode: 'modern' });
+      if (configured.some((c) => c.role === 'proxy')) writeProxyConfig(net.dataDir, net.config, { bind: `0.0.0.0:${proxyPort}`, motd: req.proxy.motd, forwardingMode: 'modern' });
+      else await net.syncProxy(); // an existing proxy learns about the new servers (and reloads if it runs)
       return `players join via ${BACKEND_HOST}`;
     });
 

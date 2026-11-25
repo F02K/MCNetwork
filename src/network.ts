@@ -160,6 +160,24 @@ export class Network extends EventEmitter {
     return this.view(cfg.id);
   }
 
+  /** Changes name, autoStart, memory limits or the join-first flag of a server. */
+  async updateServer(id: string, patch: Record<string, unknown>): Promise<ServerView> {
+    this.instance(id);
+    const index = this.config.servers.findIndex((s) => s.id === id);
+    const current = this.config.servers[index];
+    const allowed = ['name', 'autoStart', 'memory', 'entry'];
+    const unknown = Object.keys(patch).filter((k) => !allowed.includes(k));
+    if (unknown.length) throw new Error(`Cannot change ${unknown.join(', ')}`);
+    const next = validateServer({ ...current, ...patch, entry: patch.entry === undefined ? current.entry : patch.entry === true }, this.dataDir);
+    if (next.entry && next.role !== 'backend') throw new Error('Only a game server can be the first stop for players');
+    if (next.entry) for (const s of this.config.servers) if (s.id !== id) delete s.entry;
+    this.config.servers[index] = next;
+    saveConfig(this.dataDir, this.config);
+    await this.syncProxy();
+    this.emit('servers');
+    return this.view(id);
+  }
+
   /** Removes a server from the network. Its folder and world stay on disk. */
   async removeServer(id: string): Promise<void> {
     const inst = this.instance(id);
@@ -214,6 +232,31 @@ export class Network extends EventEmitter {
     const sys = this.readMemory();
     const { totalMb, reserveMb } = this.config.ram;
     return planRam({ totalMb: totalMb > 0 ? totalMb : sys.totalMb, reserveMb, servers: this.config.servers });
+  }
+
+  /** Changes how much RAM MCNetwork plans with (0 = automatic). */
+  updateRam(patch: Record<string, unknown>): { totalMb: number; reserveMb: number } {
+    for (const key of Object.keys(patch)) if (key !== 'totalMb' && key !== 'reserveMb') throw new Error(`Cannot change ${key}`);
+    for (const key of ['totalMb', 'reserveMb'] as const) {
+      const v = patch[key];
+      if (v === undefined) continue;
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new Error(`"${key}" must be a number >= 0 (0 = automatic)`);
+      this.config.ram[key] = Math.round(v);
+    }
+    saveConfig(this.dataDir, this.config);
+    return { totalMb: this.config.ram.totalMb, reserveMb: this.config.ram.reserveMb };
+  }
+
+  /** The plan for servers that do not exist yet (the wizard shows it before anything is created). */
+  previewPlan(input: Record<string, unknown>): Plan {
+    if (!Array.isArray(input.servers)) throw new Error('"servers" must be a list');
+    const servers = input.servers.map((s) => {
+      const v = validateServer({ ...(s as object), dir: 'x' }, this.dataDir);
+      return { id: v.id, role: v.role, memory: v.memory };
+    });
+    const sys = this.readMemory();
+    const reserve = typeof input.reserveMb === 'number' ? input.reserveMb : this.config.ram.reserveMb;
+    return planRam({ totalMb: this.config.ram.totalMb > 0 ? this.config.ram.totalMb : sys.totalMb, reserveMb: reserve, servers });
   }
 
   /** Writes the planned heap sizes to every connected MCLI. Running servers pick them up on restart. */

@@ -31,6 +31,7 @@ export function buildRoutes(net: Network): Route[] {
     { method: 'GET', path: '/api/servers', handler: () => net.views() },
     { method: 'POST', path: '/api/servers', handler: ({ body }) => guarded(() => net.addServer(body)) },
     { method: 'GET', path: id, handler: ({ params }) => guarded(() => net.view(params.id)) },
+    { method: 'PUT', path: id, handler: ({ params, body }) => guarded(() => net.updateServer(params.id, body)) },
     { method: 'DELETE', path: id, handler: ({ params }) => guarded(async () => (await net.removeServer(params.id), { removed: params.id })) },
 
     { method: 'POST', path: `${id}/start`, handler: forward(net, 'start', () => ({}), 120_000) },
@@ -62,6 +63,8 @@ export function buildRoutes(net: Network): Route[] {
     { method: 'GET', path: '/api/ram', handler: () => ({ latest: net.tracker.latest ?? net.sampleRam(), peaks24h: net.tracker.peaks(24 * 60) }) },
     { method: 'GET', path: '/api/ram/history', handler: ({ query }) => net.tracker.history(Math.min(1440, Math.max(1, Number(query.get('minutes') ?? 60))), Math.min(2000, Number(query.get('points') ?? 500))) },
     { method: 'GET', path: '/api/ram/plan', handler: () => net.plan() },
+    { method: 'PUT', path: '/api/ram/config', handler: ({ body }) => guarded(() => net.updateRam(body)) },
+    { method: 'POST', path: '/api/ram/plan/preview', handler: ({ body }) => guarded(() => net.previewPlan(body)) },
     { method: 'POST', path: '/api/ram/plan/apply', handler: () => guarded(() => net.applyPlan()) },
   ];
 }

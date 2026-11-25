@@ -103,4 +103,43 @@ describe('Network', () => {
     process.kill(pid as number, 'SIGKILL'); // the fake MCLI is the server process here
     await waitFor(() => inst.connection === 'online' && inst.status?.state === 'running' && inst.status.pid !== pid, 6000, 'respawn + autoStart');
   });
+
+  it('changes a server\'s settings and keeps exactly one entry server', async () => {
+    const { net: n, dir } = makeNetwork([server('lobby', { autoStart: false, port: 30066, entry: true }), server('survival', { autoStart: false, port: 30067 })]);
+    await n.start();
+    const view = await n.updateServer('survival', { name: 'Survival', autoStart: true, memory: { weight: 9 }, entry: true });
+    assert.equal(view.config.name, 'Survival');
+    assert.equal(view.config.memory.weight, 9);
+    assert.equal(n.config.servers.find((s) => s.id === 'lobby')?.entry, undefined);
+    assert.deepEqual(loadConfig(dir).servers.find((s) => s.id === 'survival')?.entry, true);
+    await n.updateServer('survival', { entry: false });
+    assert.equal(n.config.servers.find((s) => s.id === 'survival')?.entry, undefined);
+    await assert.rejects(() => n.updateServer('survival', { port: 5 }), /Cannot change port/);
+    await assert.rejects(() => n.updateServer('survival', { memory: { weight: -1 } }), /memory.weight/);
+    await assert.rejects(() => n.updateServer('ghost', {}), /Unknown server/);
+    await n.addServer({ id: 'proxy', role: 'proxy', port: 25565 });
+    await assert.rejects(() => n.updateServer('proxy', { entry: true }), /Only a game server/);
+  });
+
+  it('previews a plan for servers that do not exist yet', () => {
+    const { net: n } = makeNetwork([]);
+    const plan = n.previewPlan({ servers: [{ id: 'proxy', role: 'proxy' }, { id: 'a', memory: { weight: 2 } }], reserveMb: 2048 });
+    assert.equal(plan.reserveMb, 2048);
+    assert.deepEqual(plan.allocations.map((a) => a.id), ['proxy', 'a']);
+    assert.throws(() => n.previewPlan({}), /must be a list/);
+    assert.throws(() => n.previewPlan({ servers: [{ id: 'BAD' }] }), /"id"/);
+    assert.equal(n.previewPlan({ servers: [] }).reserveMb, 1024); // automatic: 12 % of 8 GB is below the 1 GB minimum
+  });
+
+  it('changes the RAM settings with validation and saves them', () => {
+    const { net: n, dir } = makeNetwork([]);
+    assert.deepEqual(n.updateRam({ reserveMb: 2048.4 }), { totalMb: 0, reserveMb: 2048 });
+    assert.equal(loadConfig(dir).ram.reserveMb, 2048);
+    assert.equal(n.plan().reserveMb, 2048);
+    assert.deepEqual(n.updateRam({ totalMb: 4096 }), { totalMb: 4096, reserveMb: 2048 });
+    assert.equal(n.plan().totalMb, 4096);
+    assert.throws(() => n.updateRam({ reserveMb: -1 }), /"reserveMb"/);
+    assert.throws(() => n.updateRam({ totalMb: 'x' }), /"totalMb"/);
+    assert.throws(() => n.updateRam({ sampleSeconds: 1 }), /Cannot change sampleSeconds/);
+  });
 });
