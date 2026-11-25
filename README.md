@@ -3,9 +3,16 @@
 Management tool for Minecraft server networks: one proxy (Velocity) and several backend servers on one machine,
 each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking and planning for the whole network.
 
-**Status:** the daemon and its HTTP API work. The web dashboard, the setup wizard and the server plugins are next.
+**Status:** daemon, HTTP API, web dashboard and setup wizard work. Server plugins (real heap/TPS data) and a terminal UI are next.
+
+![Dashboard](docs/img/overview.png)
 
 ## What it does today
+
+- **Web dashboard** (`http://localhost:8080`, English and German, light and dark): network overview, live console per server, player list, settings, backups, RAM chart with hover details and a table view.
+- **Setup wizard:** choose Velocity, add game servers (lobby, survival, …), see the RAM plan, confirm the Minecraft EULA, and MCNetwork builds the network:
+  installs Velocity and Paper, lets each server write its settings once, then connects them (secure "modern" player forwarding with a shared secret,
+  local-only backend ports, server list and join-first server in `velocity.toml`). Servers can be added to a running network later; the proxy is told to reload.
 
 - Runs one MCLI process (`mcli --api`) per server and keeps it alive (restarts MCLI after a crash, then starts the server again).
 - Starts the backends first and the proxy last; stops in the reverse order, gracefully.
@@ -15,6 +22,8 @@ each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking 
   - tells which running servers need a restart to use their new heap;
   - reports memory pressure (`ok` / `warn` / `critical`).
 - REST API plus a live event stream (server-sent events), optional token.
+
+![RAM](docs/img/ram.png)
 
 ## Quick start
 
@@ -26,15 +35,15 @@ npm run build
 node dist/mcnetwork.js --data ./data
 ```
 
-On the first run `data/mcnetwork.json` is written. Set `mcliPath` to your `mcli.js` (or start with `MCLI_PATH=/path/to/mcli.js`) and add servers:
+On the first run `data/mcnetwork.json` is written. Set `mcliPath` to your `mcli.js` (or start with `MCLI_PATH=/path/to/mcli.js`), restart, and open
+`http://localhost:8080` – the wizard takes it from there. Everything the dashboard does is also available over the [HTTP API](docs/API.md):
 
 ```
-curl -X POST localhost:8080/api/servers -d '{"id":"proxy","role":"proxy"}'
-curl -X POST localhost:8080/api/servers -d '{"id":"lobby","memory":{"weight":2}}'
-curl -X POST localhost:8080/api/servers/lobby/install -d '{"provider":"paper","version":"1.21.8"}'
-curl -X POST localhost:8080/api/servers/lobby/eula
 curl localhost:8080/api/ram/plan
+curl -X POST localhost:8080/api/servers/lobby/restart
 ```
+
+The dashboard files live in `web/` next to `dist/`; `--web <folder>` serves another folder.
 
 Every server lives in `data/servers/<id>/`. Removing a server from the network never deletes its files.
 
@@ -62,6 +71,14 @@ Every server lives in `data/servers/<id>/`. Removing a server from the network n
 | `memory.weight` | share of the RAM budget (default: proxy 1, backend 4) |
 | `memory.minMb` / `maxMb` | limits for the heap (defaults: proxy 256-1024, backend from 512) |
 | `memory.pinnedMb` | fixed heap, ignores the weight |
+| `port` / `entry` | set by the wizard: the server's Minecraft port, and whether players join it first |
+
+The game servers listen on `127.0.0.1` only (ports from 30066 up), so players can only reach them through the proxy.
+
+## About the Minecraft EULA
+
+Paper servers need the [Minecraft EULA](https://aka.ms/MinecraftEULA) to be accepted. MCNetwork never does this on its own:
+the wizard only continues after you tick the confirmation, and only then writes `eula.txt` through MCLI.
 
 ## How the RAM plan works
 

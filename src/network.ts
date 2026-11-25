@@ -216,7 +216,9 @@ export class Network extends EventEmitter {
   async versionChoices(provider: 'paper' | 'velocity'): Promise<{ default: string; versions: string[] }> {
     const versions = await this.lookup<string[]>('versions', { provider, snapshots: false });
     if (!versions.length) throw new Error(`No ${provider} versions available`);
-    const channels = await Promise.all(versions.slice(0, 6).map((version) => this.lookup<{ channel: string | null }>('plan', { provider, version }).then((p) => p.channel, () => null)));
+    // Velocity publishes its own recommendation, which can be several versions behind (4.x needs a newer Java than 3.x)
+    const scan = provider === 'velocity' ? 12 : 6;
+    const channels = await Promise.all(versions.slice(0, scan).map((version) => this.lookup<{ channel: string | null }>('plan', { provider, version }).then((p) => p.channel, () => null)));
     const pick = ['RECOMMENDED', 'STABLE'].map((c) => channels.indexOf(c)).find((i) => i >= 0);
     return { default: versions[pick ?? 0], versions };
   }
