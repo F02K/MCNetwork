@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { findApp } from './appdir';
 import { loadConfig, saveConfig, CONFIG_FILE } from './config';
 import { createHttpServer } from './http/server';
 import { Network } from './network';
@@ -18,7 +19,7 @@ async function main(): Promise<void> {
 
   const agentJarsDir = argValue('--agent') ? resolve(argValue('--agent') as string) : undefined;
   const network = new Network(dataDir, config, { agentJarsDir });
-  const webDir = resolve(argValue('--web') ?? join(__dirname, '..', 'web'));
+  const webDir = resolve(argValue('--web') ?? findApp('web') ?? join(__dirname, '..', 'web'));
   const http = createHttpServer(network, config.http, webDir);
   const port = await http.listen();
   network.daemonUrl = `http://127.0.0.1:${port}`; // the plugins run on this machine
@@ -36,8 +37,10 @@ async function main(): Promise<void> {
       .then(() => http.close())
       .then(() => process.exit(0));
   };
-  process.on('SIGINT', quit);
+  process.on('SIGINT', quit); // Ctrl+C, and what service wrappers such as NSSM send
   process.on('SIGTERM', quit);
+  process.on('SIGBREAK', quit); // Windows: Ctrl+Break and closing the console window
+  network.on('shutdown', quit); // POST /api/shutdown
 }
 
 main().catch((err: unknown) => {

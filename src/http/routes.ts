@@ -70,6 +70,7 @@ export function buildRoutes(net: Network): Route[] {
         }),
     },
 
+    { method: 'POST', path: '/api/shutdown', handler: () => (net.requestShutdown(), { stopping: true }) },
     { method: 'GET', path: '/api/ports', handler: () => guarded(() => portOverview(net)) },
     {
       method: 'POST',

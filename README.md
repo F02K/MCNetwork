@@ -140,6 +140,10 @@ See [docs/API.md](docs/API.md) for the HTTP API and [docs/ARCHITECTURE.md](docs/
 
 The setup, the proxy connection (modern forwarding), joining through Velocity, switching servers and adding a server to a running network were verified with a real Velocity and real Paper servers. See [docs/E2E.md](docs/E2E.md).
 
+## Windows Server
+
+MCNetwork runs on Windows (Node.js 22+): see [docs/WINDOWS.md](docs/WINDOWS.md) for the start script, running it as a service, the Windows Firewall (only the proxy port is needed; the Ports page reads the real rule state) and packaging (`npm run package`).
+
 ## Development
 
 ```
@@ -147,4 +151,5 @@ npm run typecheck
 npm run lint
 npm test               # tests use a stand-in for MCLI (test/fake-mcli.ts)
 npm run test:coverage
+npm run package        # release/mcnetwork: bundle, dashboard, plugins, docs, start scripts
 ```

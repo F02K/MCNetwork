@@ -329,4 +329,5 @@ export const DE = {
   'Check now': 'Jetzt prüfen',
   'Reachable: {ip}:{port} answered{v}': 'Erreichbar: {ip}:{port} hat geantwortet{v}',
   'Not reachable from the internet ({ip}:{port})': 'Aus dem Internet nicht erreichbar ({ip}:{port})',
+  'Run one of these in an elevated PowerShell (MCNetwork does not change your firewall by itself):': 'Führe eines davon in einer PowerShell mit Administratorrechten aus (MCNetwork ändert deine Firewall nicht von selbst):',
 };

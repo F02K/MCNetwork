@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import { basename, join, relative, resolve, isAbsolute } from 'node:path';
 import { resolveMcliPath, resolveServerDir, saveConfig, validateServer } from './config';
+import { findApp } from './appdir';
 import { installAgent, loadManifest, type InstallResult } from './agent/install';
 import { AgentStore, type PendingCommand } from './agent/store';
 import type { AgentGame, AgentJvm, AgentProxy } from './agent/protocol';
@@ -214,7 +215,7 @@ export class Network extends EventEmitter {
   // ------------------------------------------------------------ agent plugins
 
   get agentJarsDir(): string {
-    return this.opts.agentJarsDir ?? join(__dirname, '..', 'agent', 'jars');
+    return this.opts.agentJarsDir ?? findApp('agent', 'jars') ?? join(__dirname, '..', 'agent', 'jars');
   }
 
   /** Puts the plugin and its configuration into the server's folder (before its first start, or when it is stopped). */
@@ -325,6 +326,11 @@ export class Network extends EventEmitter {
     await this.syncProxy();
     this.emit('servers');
     return this.view(id);
+  }
+
+  /** Asks whoever runs the daemon to stop it gracefully (the 'shutdown' event); used by the HTTP API for service managers. */
+  requestShutdown(): void {
+    setImmediate(() => this.emit('shutdown'));
   }
 
   /** Records a new port for a server and brings the proxy's server list up to date (the files were changed by the caller). */

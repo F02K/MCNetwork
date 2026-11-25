@@ -87,10 +87,10 @@ export function mount(root) {
       a.address && h('div', { class: 'callout info' }, h('span', { class: 'ico', 'aria-hidden': 'true' }, 'ℹ'), h('span', {}, t('Players connect to'), ' ', h('strong', { class: 'mono' }, a.address))),
       stepCard('1', a.proxyRunning, t('The proxy runs on port {p}', { p: a.proxyPort }),
         a.proxyRunning ? h('p', { class: 'muted small' }, t('It answers on this machine.')) : h('p', { class: 'muted' }, t('Start the proxy first (Network page).'))),
-      stepCard('2', fw?.active === false || !fw?.commands.length ? null : false, t('Firewall of this machine'),
+      stepCard('2', fw?.portOpen === true || fw?.active === false ? true : !fw?.commands.length ? null : false, t('Firewall of this machine'),
         fw?.tool ? h('p', { class: 'muted small' }, `${t('Found')}: ${fw.tool}${fw.active === true ? ` (${t('active')})` : fw.active === false ? ` (${t('off')})` : ''}`) : null,
         fw?.note && h('p', { class: 'muted small' }, fw.note),
-        fw?.commands.length > 0 && fw.active !== false && h('div', { class: 'stack', style: 'gap:.4rem' }, h('p', { class: 'small' }, t('Run this as administrator (MCNetwork does not change your firewall by itself):')), codeBlock(fw.commands))),
+        fw?.commands.length > 0 && fw.active !== false && fw.portOpen !== true && h('div', { class: 'stack', style: 'gap:.4rem' }, h('p', { class: 'small' }, fw.platform === 'win32' ? t('Run one of these in an elevated PowerShell (MCNetwork does not change your firewall by itself):') : t('Run this as administrator (MCNetwork does not change your firewall by itself):')), codeBlock(fw.commands))),
       stepCard('3', m ? true : null, t('Router: forward the port'),
         a.carrierNat && h('div', { class: 'callout bad' }, h('span', { class: 'ico', 'aria-hidden': 'true' }, '⚠'), t('Your router reports a private address. Your internet provider probably shares one address between customers (CGNAT): forwarding a port cannot work. Ask the provider for a public address or use a tunnel service.')),
         m

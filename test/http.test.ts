@@ -200,4 +200,12 @@ describe('HTTP API', () => {
     const recs = (await call('GET', '/api/ram/recommendations')).json as { id: string; state: string }[];
     assert.deepEqual(recs.map((r) => r.id), ['proxy', 'lobby']);
   });
+
+  it('asks the daemon to stop gracefully (for service managers)', async () => {
+    let asked = false;
+    net.once('shutdown', () => (asked = true));
+    assert.equal((await call('POST', '/api/shutdown', {}, {})).status, 401, 'needs the token like everything else');
+    assert.deepEqual((await call('POST', '/api/shutdown')).json, { stopping: true });
+    await waitFor(() => asked, 2000, 'shutdown event');
+  });
 });

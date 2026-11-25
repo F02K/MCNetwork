@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ID_RE, resolveServerDir } from '../config';
+import { ID_RE, resolveServerDir, WINDOWS_RESERVED_RE } from '../config';
 import type { McliInstance } from '../mcli/instance';
 import type { Network } from '../network';
 import type { MemorySettings, ServerConfig } from '../types';
@@ -90,6 +90,7 @@ export function parseSetupRequest(input: unknown, existingIds: string[], hasProx
   const backends = body.backends.map((raw, i): SetupBackend => {
     const b = obj(raw, `backends[${i}]`);
     if (typeof b.id !== 'string' || !ID_RE.test(b.id)) throw new Error(`backends[${i}].id must be 1-32 characters: lowercase letters, digits, "-" or "_"`);
+    if (WINDOWS_RESERVED_RE.test(b.id)) throw new Error(`"${b.id}" is a reserved name on Windows. Choose another id.`);
     if (seen.has(b.id)) throw new Error(`The server id "${b.id}" is used twice (or reserved)`);
     seen.add(b.id);
     const imported = parseImport(b.import, `backends[${i}].import`);

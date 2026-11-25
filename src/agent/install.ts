@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync as writeFile } from 'node:fs';
 import { join } from 'node:path';
 import type { Role } from '../types';
 
@@ -58,7 +58,7 @@ export function agentConfigText(s: InstallSettings): string {
  * against the manifest first; an older or modified jar is replaced, the configuration is rewritten
  * when URL, token or server id changed.
  */
-export function installAgent(serverDir: string, role: Role, jarsDir: string, settings: InstallSettings): InstallResult {
+export function installAgent(serverDir: string, role: Role, jarsDir: string, settings: InstallSettings, write: typeof writeFile = writeFile): InstallResult {
   const manifest = loadManifest(jarsDir);
   if (!manifest) throw new Error(`The agent plugins are missing (${join(jarsDir, 'manifest.json')}). Build them with "npm run build:agent".`);
   const kind = agentKind(role);
@@ -71,12 +71,20 @@ export function installAgent(serverDir: string, role: Role, jarsDir: string, set
   const target = join(plugins, AGENT_JAR);
   let jar: InstallResult['jar'] = 'installed';
   if (existsSync(target)) jar = sha256(readFileSync(target)) === info.sha256 ? 'current' : 'updated';
-  if (jar !== 'current') writeFileSync(target, bundled);
+  if (jar !== 'current') {
+    try {
+      write(target, bundled);
+    } catch (err) {
+      // Windows locks a jar that a running server has loaded
+      if (['EBUSY', 'EPERM', 'EACCES'].includes((err as NodeJS.ErrnoException).code ?? '')) throw new Error(`Cannot replace ${AGENT_JAR}: the server is running and holds the file. Stop the server, then try again.`);
+      throw err;
+    }
+  }
 
   const configFile = join(plugins, CONFIG_DIR[kind], 'config.properties');
   const text = agentConfigText(settings);
   let config: InstallResult['config'] = 'written';
   if (existsSync(configFile) && readFileSync(configFile, 'utf8') === text) config = 'current';
-  else writeFileSync(configFile, text);
+  else write(configFile, text);
   return { kind, version: manifest.version, jar, config };
 }

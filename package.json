@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "test": "node scripts/test.mjs",
     "test:coverage": "node scripts/test.mjs --coverage",
-    "build:agent": "node scripts/build-agent.mjs"
+    "build:agent": "node scripts/build-agent.mjs",
+    "package": "node scripts/package.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

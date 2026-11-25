@@ -65,4 +65,19 @@ describe('agent installation', () => {
     assert.throws(() => installAgent(dir, 'backend', jars, settings), /does not match the manifest/);
     assert.equal(existsSync(join(dir, 'plugins', AGENT_JAR)), false, 'a bad jar is never installed');
   });
+
+  it('explains a jar that the running server holds (Windows locks it)', () => {
+    const jars = makeAgentJars();
+    const dir = tmp();
+    installAgent(dir, 'backend', jars, settings);
+    writeFileSync(join(dir, 'plugins', AGENT_JAR), 'old');
+    const locked = () => {
+      throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+    };
+    assert.throws(() => installAgent(dir, 'backend', jars, settings, locked), /server is running and holds the file/);
+    const other = () => {
+      throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+    };
+    assert.throws(() => installAgent(dir, 'backend', jars, settings, other), /disk full/);
+  });
 });

@@ -1,10 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { resolveConfigured } from './appdir';
 import type { MemorySettings, NetworkConfig, ServerConfig } from './types';
 
 export const CONFIG_FILE = 'mcnetwork.json';
 export const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+/** Names Windows reserves for devices: a folder with such a name cannot be created there. */
+export const WINDOWS_RESERVED_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
 export function defaultConfig(): NetworkConfig {
   return {
@@ -46,6 +49,7 @@ export function validateServer(input: unknown, dataDir: string): ServerConfig {
   if (typeof input !== 'object' || input === null) throw new Error('Server must be an object');
   const s = input as Record<string, unknown>;
   if (typeof s.id !== 'string' || !ID_RE.test(s.id)) throw new Error('"id" must be 1-32 characters: lowercase letters, digits, "-" or "_"');
+  if (WINDOWS_RESERVED_RE.test(s.id)) throw new Error(`"${s.id}" is a reserved name on Windows. Choose another id.`);
   const role = s.role === undefined ? 'backend' : s.role;
   if (role !== 'proxy' && role !== 'backend') throw new Error('"role" must be "proxy" or "backend"');
   const dir = s.dir === undefined ? join('servers', s.id) : s.dir;
@@ -117,4 +121,4 @@ export function saveConfig(dataDir: string, cfg: NetworkConfig): void {
 }
 
 export const resolveServerDir = (dataDir: string, s: ServerConfig): string => resolve(dataDir, s.dir);
-export const resolveMcliPath = (dataDir: string, cfg: NetworkConfig): string => resolve(dataDir, cfg.mcliPath);
+export const resolveMcliPath = (dataDir: string, cfg: NetworkConfig, roots?: string[]): string => resolveConfigured(dataDir, cfg.mcliPath, roots);

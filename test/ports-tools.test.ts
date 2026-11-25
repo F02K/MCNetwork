@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
-import { detectFirewall, lanAddresses, openCommands } from '../src/ports/firewall';
+import { detectFirewall, lanAddresses, openCommands, portListHas, type Run } from '../src/ports/firewall';
 import { checkFromInternet, publicIp, type Fetch } from '../src/ports/reach';
 import { isPrivateAddress, localAddressFor, parseDescription, Upnp } from '../src/ports/upnp';
 import { fakeRouter, type FakeRouter } from './fake-igd';
@@ -64,7 +64,8 @@ describe('firewall detection', () => {
     assert.deepEqual(openCommands('ufw', 25565), ['sudo ufw allow 25565/tcp']);
     assert.deepEqual(openCommands('firewalld', 25565), ['sudo firewall-cmd --permanent --add-port=25565/tcp', 'sudo firewall-cmd --reload']);
     assert.match(openCommands('iptables', 25565)[0], /--dport 25565 -j ACCEPT/);
-    assert.match(openCommands('windows', 25565)[0], /netsh advfirewall firewall add rule name="MCNetwork 25565".*localport=25565/);
+    assert.match(openCommands('windows', 25565)[0], /^New-NetFirewallRule -DisplayName "MCNetwork 25565" -Direction Inbound -Protocol TCP -LocalPort 25565 -Action Allow$/);
+    assert.match(openCommands('windows', 25565)[1], /netsh advfirewall firewall add rule name="MCNetwork 25565".*localport=25565/);
     assert.deepEqual(openCommands(null, 25565), []);
     assert.deepEqual(openCommands('macos', 25565), []);
   });
@@ -93,6 +94,53 @@ describe('firewall detection', () => {
     assert.deepEqual({ tool: none.tool, commands: none.commands }, { tool: null, commands: [] });
     assert.match(none.note ?? '', /port 25570/);
     assert.match((await detectFirewall(25565, () => Promise.resolve(null), 'linux', true)).note ?? '', /container/);
+  });
+});
+
+describe('Windows firewall (as on a Windows Server, also a German one)', () => {
+  /** A Windows machine: PowerShell answers when `ps` has an entry for the script, netsh when given. */
+  const windows = (o: { profiles?: string | null; rules?: string | null; netsh?: string | null }): Run => (cmd, args) => {
+    if (cmd === 'powershell') return Promise.resolve(/Get-NetFirewallProfile/.test(args[3]) ? (o.profiles ?? null) : /Get-NetFirewallRule/.test(args[3]) ? (o.rules ?? null) : null);
+    if (cmd === 'netsh') return Promise.resolve(o.netsh ?? null);
+    return Promise.resolve(null);
+  };
+
+  it('matches ports in lists, ranges and rules for every port', () => {
+    assert.equal(portListHas(['25565'], 25565), true);
+    assert.equal(portListHas(['80', '25000-26000'], 25565), true);
+    assert.equal(portListHas(['1,2,25565'], 25565), true);
+    assert.equal(portListHas(['Any', '80', '25566'], 25565), false, '"Any" says nothing about this port');
+    assert.equal(portListHas([], 25565), false);
+    assert.equal(portListHas(['25566-25570'], 25565), false);
+  });
+
+  it('reads the state from PowerShell, independent of the language', async () => {
+    const on = await detectFirewall(25565, windows({ profiles: 'Domain=True\r\nPrivate=True\r\nPublic=False\r\n', rules: '25565\r\n' }), 'win32', false);
+    assert.deepEqual({ tool: on.tool, active: on.active, portOpen: on.portOpen }, { tool: 'windows', active: true, portOpen: true });
+    assert.match(on.note ?? '', /already allows TCP port 25565/);
+    const off = await detectFirewall(25565, windows({ profiles: 'Domain=False\r\nPrivate=False\r\nPublic=False\r\n', rules: '' }), 'win32', false);
+    assert.deepEqual({ active: off.active, portOpen: off.portOpen }, { active: false, portOpen: false });
+    assert.match(off.note ?? '', /switched off/);
+  });
+
+  it('shows the commands when the port has no rule yet', async () => {
+    const r = await detectFirewall(25565, windows({ profiles: 'Domain=True\r\n', rules: '80\r\n443\r\nAny\r\n' }), 'win32', false);
+    assert.equal(r.portOpen, false);
+    assert.equal(r.commands.length, 2);
+    assert.match(r.commands[0], /New-NetFirewallRule/);
+    assert.match(r.note ?? '', /elevated PowerShell/);
+  });
+
+  it('falls back to netsh with German, Spanish and French words, and never turns "unknown" into "off"', async () => {
+    for (const word of ['EIN', 'ACTIVADO', 'ACTIVÉ', 'ON']) {
+      const r = await detectFirewall(25565, windows({ profiles: null, rules: null, netsh: `Domänenprofil-Einstellungen:\r\nStatus                                ${word}\r\n` }), 'win32', false);
+      assert.equal(r.active, true, word);
+      assert.equal(r.portOpen, null, 'the rules could not be read');
+    }
+    const unknown = await detectFirewall(25565, windows({ profiles: null, rules: null, netsh: 'Status    Irgendwas\r\n' }), 'win32', false);
+    assert.equal(unknown.active, null);
+    assert.equal(unknown.commands.length, 2, 'the commands stay visible');
+    assert.equal((await detectFirewall(25565, windows({}), 'win32', false)).active, null);
   });
 });
 
