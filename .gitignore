@@ -1,0 +1,7 @@
+node_modules/
+dist/
+release/
+.test-build/
+coverage/
+# runtime data of a local instance
+/data/
