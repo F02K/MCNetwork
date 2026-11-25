@@ -55,6 +55,7 @@ export function buildRoutes(net: Network): Route[] {
     { method: 'GET', path: `${id}/players`, handler: forward(net, 'players') },
     { method: 'GET', path: `${id}/settings`, handler: forward(net, 'settings') },
 
+    { method: 'POST', path: '/api/import/inspect', handler: ({ body }) => guarded(() => net.inspectImport(str(body, 'path'))) },
     { method: 'GET', path: '/api/setup', handler: () => net.setup.state },
     { method: 'POST', path: '/api/setup', handler: ({ body }) => guarded(() => net.setup.start(body)) },
     {

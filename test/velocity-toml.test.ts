@@ -75,3 +75,36 @@ describe('ports', () => {
     await assert.rejects(() => allocatePorts(2, [], 65535, free), /No free port/);
   });
 });
+
+describe('patchVelocityToml for an imported proxy', () => {
+  const existing = [
+    '[servers]',
+    'hub = "10.0.0.5:25566"',
+    '"minigames" = "10.0.0.6:25567" # on another machine',
+    'try = ["hub"]',
+    '',
+    '[forced-hosts]',
+    '',
+  ].join('\n');
+  const mine = { servers: { lobby: '127.0.0.1:30066' }, tryOrder: ['lobby'], keepServers: true };
+
+  it('keeps the servers the proxy already had and adds the network after them', () => {
+    const out = patchVelocityToml(existing, mine);
+    assert.match(out, /lobby = "127\.0\.0\.1:30066"\n# Servers that were already in this file:\nhub = "10\.0\.0\.5:25566"\n"minigames" = "10\.0\.0\.6:25567" # on another machine\n/);
+    assert.match(out, /try = \["lobby", "hub"\]/);
+  });
+
+  it('is stable on repeated runs and forgets servers that left the network', () => {
+    const once = patchVelocityToml(existing, mine);
+    assert.equal(patchVelocityToml(once, mine), once);
+    const without = patchVelocityToml(once, { servers: { creative: '127.0.0.1:30070' }, tryOrder: ['creative'], keepServers: true });
+    assert.ok(!without.includes('lobby'), 'our removed server is gone');
+    assert.ok(without.includes('hub = "10.0.0.5:25566"'), 'the user\'s own server stays');
+    assert.match(without, /try = \["creative", "hub"\]/);
+  });
+
+  it('does not keep anything unless asked to', () => {
+    const out = patchVelocityToml(existing, { servers: { lobby: '127.0.0.1:30066' }, tryOrder: ['lobby'] });
+    assert.ok(!out.includes('hub'));
+  });
+});

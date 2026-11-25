@@ -16,7 +16,7 @@ export const proxyOf = (cfg: NetworkConfig): ServerConfig | undefined => cfg.ser
 
 /** What the proxy has to know: every backend with a port, and where players land first. */
 export function proxyLayout(cfg: NetworkConfig): { servers: Record<string, string>; tryOrder: string[] } {
-  const backends = cfg.servers.filter((s) => s.role === 'backend' && s.port !== undefined);
+  const backends = cfg.servers.filter((s) => s.role === 'backend' && s.port !== undefined && !s.standalone);
   const entries = backends.filter((s) => s.entry).map((s) => s.id);
   return {
     servers: Object.fromEntries(backends.map((s) => [s.id, `${BACKEND_HOST}:${s.port}`])),
@@ -40,7 +40,7 @@ export function writeProxyConfig(dataDir: string, cfg: NetworkConfig, extra: Pro
   const file = join(resolveServerDir(dataDir, proxy), VELOCITY_TOML);
   if (!existsSync(file)) return false;
   const before = readFileSync(file, 'utf8');
-  const after = patchVelocityToml(before, { ...proxyLayout(cfg), ...extra });
+  const after = patchVelocityToml(before, { ...proxyLayout(cfg), keepServers: proxy.imported === true, ...extra });
   if (after === before) return false;
   writeFileSync(file, after);
   return true;
@@ -52,11 +52,13 @@ export function readForwardingSecret(dataDir: string, proxy: ServerConfig): stri
 }
 
 /** Settings a Paper backend needs before its first start (port, local only, proxy handles login). */
-export function prepareBackendFiles(dir: string, server: ServerConfig): void {
+export function prepareBackendFiles(dir: string, server: ServerConfig, opts: { keepMotd?: boolean } = {}): void {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, 'server.properties');
   const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  writeFileSync(file, patchProperties(text, { 'server-port': server.port ?? 25565, 'server-ip': BACKEND_HOST, 'online-mode': false, motd: server.name }));
+  const values: Record<string, string | number | boolean> = { 'server-port': server.port ?? 25565, 'server-ip': BACKEND_HOST, 'online-mode': false };
+  if (!opts.keepMotd) values.motd = server.name; // an imported server keeps its own message
+  writeFileSync(file, patchProperties(text, values));
 }
 
 /** Tells a Paper backend to trust the proxy's forwarded player data. Needs paper-global.yml from a first start. */

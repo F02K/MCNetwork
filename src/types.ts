@@ -25,6 +25,12 @@ export interface ServerConfig {
   port?: number;
   /** Backends only: players join this server first (the proxy's "try" list). */
   entry?: boolean;
+  /** `dir` is an absolute folder outside the data directory (an imported server that is used where it is). */
+  external?: boolean;
+  /** Managed and monitored, but not behind the proxy (software that cannot receive forwarded players). */
+  standalone?: boolean;
+  /** Existing server brought in from outside; an imported proxy keeps the servers it already lists. */
+  imported?: boolean;
   memory: MemorySettings;
 }
 

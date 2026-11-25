@@ -4,6 +4,7 @@ import { refreshNetwork, store, subscribe } from '../store.js';
 import { toast } from '../ui.js';
 import { fill, fmtMb, h } from '../util.js';
 import { usageBar } from '../charts.js';
+import { openImportDialog } from './import-dialog.js';
 
 const SIZES = { small: 2, medium: 4, large: 8 };
 const TEMPLATES = [
@@ -15,7 +16,7 @@ const TEMPLATES = [
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
 /** The answers survive leaving the page; they are cleared when a setup has finished. */
-const fresh = () => ({ step: 0, proxy: { version: '', port: 25565, motd: 'A Minecraft Network' }, servers: [], reserveMb: 0, acceptEula: false, start: true });
+const fresh = () => ({ step: 0, proxy: { version: '', port: 25565, motd: 'A Minecraft Network', import: null }, servers: [], reserveMb: 0, acceptEula: false, start: true });
 let wiz = fresh();
 let defaults = null;
 
@@ -26,21 +27,25 @@ function versionSelect(choices, current, onChange) {
   return sel;
 }
 
-function proxyStep() {
+function proxyStep(rerender) {
   return h('div', { class: 'stack' },
     h('div', {}, h('h2', {}, t('Choose your proxy')), h('p', { class: 'muted' }, t('The proxy is the front door of your network: players connect to it and it sends them to your game servers.'))),
     h('button', { class: 'choice', role: 'radio', 'aria-checked': 'true' }, h('div', {}, h('strong', {}, 'Velocity'), ' ', h('span', { class: 'badge good' }, t('recommended')), h('p', { class: 'muted small' }, t('Modern, fast and actively developed. Secure player forwarding to Paper servers is set up for you.')))),
     h('button', { class: 'choice', role: 'radio', 'aria-checked': 'false', 'aria-disabled': 'true', title: t('Not available yet') }, h('div', {}, h('strong', {}, 'BungeeCord / Waterfall'), ' ', h('span', { class: 'badge' }, t('later')), h('p', { class: 'muted small' }, t('Older proxies. Velocity is the better choice for new networks.')))),
-    h('div', { class: 'grid', style: 'grid-template-columns:repeat(auto-fit,minmax(200px,1fr))' },
+    wiz.proxy.import
+      ? h('div', { class: 'callout info' }, h('span', { class: 'ico', 'aria-hidden': 'true' }, 'ℹ'), h('span', { class: 'grow' }, t('Using your existing Velocity: {path}', { path: wiz.proxy.import.path }), h('div', { class: 'small muted' }, t('Its port, message and servers stay as they are. The network is added to it.'))), h('button', { class: 'btn small', onClick: () => { wiz.proxy.import = null; rerender(); } }, t('Install a new one instead')))
+      : h('div', { class: 'row' }, h('span', { class: 'muted small' }, t('Already running Velocity?')), h('button', { class: 'btn small', onClick: () => openImportDialog({ role: 'proxy', takenIds: () => [], onAdd: (e) => { wiz.proxy.import = e.import; rerender(); } }) }, t('Use my existing proxy…'))),
+    !wiz.proxy.import && h('div', { class: 'grid', style: 'grid-template-columns:repeat(auto-fit,minmax(200px,1fr))' },
       field(t('Velocity version'), versionSelect(defaults.velocity, wiz.proxy.version, (v) => (wiz.proxy.version = v)), t('The newest recommended build is preselected.')),
       field(t('Public port'), h('input', { type: 'number', min: 1, max: 65535, value: wiz.proxy.port, onInput: (e) => (wiz.proxy.port = Number(e.target.value)) }), t('Players connect here. 25565 is the Minecraft default.')),
     ),
-    field(t('Server list message (MOTD)'), h('input', { type: 'text', value: wiz.proxy.motd, onInput: (e) => (wiz.proxy.motd = e.target.value) }), t('Shown in the player’s server list. MiniMessage formatting like <green>text</green> works.')),
+    !wiz.proxy.import && field(t('Server list message (MOTD)'), h('input', { type: 'text', value: wiz.proxy.motd, onInput: (e) => (wiz.proxy.motd = e.target.value) }), t('Shown in the player’s server list. MiniMessage formatting like <green>text</green> works.')),
   );
 }
 
 function serversStep(rerender, hasProxy) {
   const taken = () => new Set([...wiz.servers.map((s) => s.id), ...store.order]);
+  const taken0 = () => [...taken()];
   const add = (tpl) => {
     let id = tpl.id;
     let name = tpl.name;
@@ -52,21 +57,42 @@ function serversStep(rerender, hasProxy) {
     if (!wiz.servers.some((s) => s.entry) && !(hasProxy && [...store.servers.values()].some((v) => v.config.entry))) wiz.servers[0].entry = true;
     rerender();
   };
-  const rows = wiz.servers.map((s, i) => h('div', { class: 'server-row' },
+  const remove = (i) => {
+    wiz.servers.splice(i, 1);
+    if (!wiz.servers.some((x) => x.entry && !x.standalone)) {
+      const first = wiz.servers.find((x) => !x.standalone);
+      if (first) first.entry = true;
+    }
+    rerender();
+  };
+  const importedRow = (s, i) => h('div', { class: 'server-row', style: 'grid-template-columns:1fr auto' },
+    h('div', { class: 'stack', style: 'gap:.35rem' },
+      h('div', { class: 'row' }, h('strong', {}, s.name), h('span', { class: 'badge accent' }, t('imported')), s.standalone && h('span', { class: 'badge' }, t('managed only')), h('span', { class: 'muted small' }, `${s.summary} · ${{ copy: t('copy'), move: t('move'), link: t('in place') }[s.import.mode]} · ID ${s.id}`)),
+      h('div', { class: 'muted small mono', style: 'overflow-wrap:anywhere' }, s.import.path),
+      s.warnings?.map((w) => h('div', { class: 'small' }, `ℹ ${w}`)),
+      h('label', { class: 'field', style: 'max-width:16rem' }, t('Size'), h('select', { onChange: (e) => (s.size = e.target.value) }, [['small', t('Small – lobby, hub')], ['medium', t('Medium')], ['large', t('Large – survival, big worlds')]].map(([v, l]) => h('option', { value: v, selected: s.size === v }, l)))),
+    ),
+    h('div', { class: 'row', style: 'align-self:start' },
+      !s.standalone && h('label', { class: 'check small', title: t('Players join this server first') }, h('input', { type: 'radio', name: 'entry', checked: s.entry, onChange: () => { wiz.servers.forEach((x) => (x.entry = x === s)); } }), t('Join first')),
+      h('button', { class: 'btn ghost icon-btn', 'aria-label': t('Remove'), onClick: () => remove(i) }, '✕'),
+    ),
+  );
+  const rows = wiz.servers.map((s, i) => s.import ? importedRow(s, i) : h('div', { class: 'server-row' },
     field(t('ID'), h('input', { type: 'text', value: s.id, maxlength: 32, title: t('Used in the proxy and folder'), onInput: (e) => (s.id = e.target.value.trim().toLowerCase()) })),
     field(t('Name'), h('input', { type: 'text', value: s.name, onInput: (e) => (s.name = e.target.value) })),
     field('Paper', versionSelect(defaults.paper, s.version, (v) => (s.version = v))),
     field(t('Size'), h('select', { onChange: (e) => (s.size = e.target.value) }, [['small', t('Small – lobby, hub')], ['medium', t('Medium')], ['large', t('Large – survival, big worlds')]].map(([v, l]) => h('option', { value: v, selected: s.size === v }, l)))),
     h('div', { class: 'row' },
       h('label', { class: 'check small', title: t('Players join this server first') }, h('input', { type: 'radio', name: 'entry', checked: s.entry, onChange: () => { wiz.servers.forEach((x) => (x.entry = x === s)); } }), t('Join first')),
-      h('button', { class: 'btn ghost icon-btn', 'aria-label': t('Remove'), onClick: () => { wiz.servers.splice(i, 1); if (!wiz.servers.some((x) => x.entry) && wiz.servers[0]) wiz.servers[0].entry = true; rerender(); } }, '✕'),
+      h('button', { class: 'btn ghost icon-btn', 'aria-label': t('Remove'), onClick: () => remove(i) }, '✕'),
     ),
   ));
   return h('div', { class: 'stack' },
     h('div', {}, h('h2', {}, t('Your game servers')), h('p', { class: 'muted' }, t('Each one is a Paper server. Players pick them with /server or join the first one automatically. You can add more at any time.'))),
     rows.length ? rows : h('p', { class: 'muted' }, t('Add at least one game server.')),
     h('div', { class: 'row' }, h('span', { class: 'muted small' }, t('Add:')), TEMPLATES.map((tpl) => h('button', { class: 'btn small', onClick: () => add(tpl) }, `+ ${tpl.name}`)),
-      h('button', { class: 'btn small', onClick: () => add({ id: 'server', name: 'Server', size: 'medium' }) }, `+ ${t('Other')}`)),
+      h('button', { class: 'btn small', onClick: () => add({ id: 'server', name: 'Server', size: 'medium' }) }, `+ ${t('Other')}`),
+      h('button', { class: 'btn small primary right', onClick: () => openImportDialog({ role: 'backend', takenIds: taken0, onAdd: (e) => { wiz.servers.push({ ...e, version: '', size: 'medium', entry: false }); if (!e.standalone && !wiz.servers.some((x) => x.entry && !x.standalone) && !(hasProxy && [...store.servers.values()].some((v) => v.config.entry))) wiz.servers.find((x) => !x.standalone).entry = true; rerender(); } }) }, t('Import an existing server…'))),
   );
 }
 
@@ -110,9 +136,9 @@ function reviewStep(hasProxy) {
   const go = h('button', { class: 'btn primary', disabled: !wiz.acceptEula, onClick: async () => {
     go.disabled = true;
     try {
-      const body = { backends: wiz.servers.map((s) => ({ id: s.id, name: s.name, version: s.version || undefined, memory: { weight: SIZES[s.size] }, entry: s.entry })), acceptEula: wiz.acceptEula, start: wiz.start };
+      const body = { backends: wiz.servers.map((s) => ({ id: s.id, name: s.name, version: s.import ? undefined : s.version || undefined, memory: { weight: SIZES[s.size] }, entry: s.entry && !s.standalone, import: s.import })), acceptEula: wiz.acceptEula, start: wiz.start };
       if (!hasProxy) {
-        body.proxy = { version: wiz.proxy.version || undefined, port: wiz.proxy.port, motd: wiz.proxy.motd };
+        body.proxy = wiz.proxy.import ? { import: wiz.proxy.import } : { version: wiz.proxy.version || undefined, port: wiz.proxy.port, motd: wiz.proxy.motd };
         body.ram = { reserveMb: wiz.reserveMb };
       }
       store.setup = await post('/api/setup', body);
@@ -128,9 +154,10 @@ function reviewStep(hasProxy) {
   return h('div', { class: 'stack' },
     h('div', {}, h('h2', {}, t('Review')), h('p', { class: 'muted' }, t('This is what MCNetwork will do:'))),
     h('ul', { style: 'margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.35rem' },
-      !hasProxy && h('li', {}, t('Install Velocity {v} on port {p}', { v: wiz.proxy.version || defaults.velocity.default, p: wiz.proxy.port })),
-      wiz.servers.map((s) => h('li', {}, t('Install Paper {v} as "{n}" ({size})', { v: s.version || defaults.paper.default, n: s.name, size: s.size === 'small' ? t('small') : s.size === 'large' ? t('large') : t('medium') }))),
+      !hasProxy && h('li', {}, wiz.proxy.import ? t('Use your existing Velocity proxy ({path})', { path: wiz.proxy.import.path }) : t('Install Velocity {v} on port {p}', { v: wiz.proxy.version || defaults.velocity.default, p: wiz.proxy.port })),
+      wiz.servers.map((s) => h('li', {}, s.import ? t('Import "{n}" ({what}, {mode}){extra}', { n: s.name, what: s.summary, mode: { copy: t('copy'), move: t('move'), link: t('in place') }[s.import.mode], extra: s.standalone ? ` – ${t('managed only')}` : s.import.convertToPaper ? ` – ${t('switched to Paper')}` : '' }) : t('Install Paper {v} as "{n}" ({size})', { v: s.version || defaults.paper.default, n: s.name, size: s.size === 'small' ? t('small') : s.size === 'large' ? t('large') : t('medium') }))),
       h('li', {}, t('Connect everything: secure player forwarding, server list, local-only game server ports')),
+      wiz.servers.some((s) => s.import) && h('li', {}, t('Changed settings of imported servers are saved first (folder .mcnetwork-backup)')),
       h('li', {}, t('Plan the RAM and set the heap of every server')),
     ),
     h('label', { class: 'check card' }, eula, h('span', {}, t('I accept the '), h('a', { href: 'https://aka.ms/MinecraftEULA', target: '_blank', rel: 'noopener noreferrer' }, t('Minecraft EULA')), t(' for the game servers.'), h('div', { class: 'muted small' }, t('Required: Paper servers will not start without it. MCNetwork never accepts it for you.')))),
@@ -139,7 +166,7 @@ function reviewStep(hasProxy) {
   );
 }
 
-const ICON = { pending: '○', running: '◐', done: '✓', failed: '✕' };
+const ICON = { pending: '○', running: '◐', done: '✓', failed: '✕', skipped: '–' };
 
 function installStep(finish) {
   const box = h('div', { class: 'stack' });
@@ -202,7 +229,7 @@ export function mount(root) {
     const key = steps[Math.min(wiz.step, steps.length - 1)];
     const idx = steps.indexOf(key);
     const error = h('p', { class: 'callout bad', style: 'display:none' });
-    const content = loading ? h('p', { class: 'muted' }, t('Loading…')) : { proxy: proxyStep, servers: () => serversStep(render, hasProxy), ram: () => ramStep(hasProxy), review: () => reviewStep(hasProxy) }[key]();
+    const content = loading ? h('p', { class: 'muted' }, t('Loading…')) : { proxy: () => proxyStep(render), servers: () => serversStep(render, hasProxy), ram: () => ramStep(hasProxy), review: () => reviewStep(hasProxy) }[key]();
     fill(root, h('div', { class: 'wizard' },
       h('ol', { class: 'steps', style: 'padding:0;margin:0 0 20px' }, steps.map((k, i) => h('li', { class: i < idx ? 'done' : '', 'aria-current': i === idx ? 'step' : undefined }, labels[k]))),
       h('div', { class: 'card stack' }, content, error,

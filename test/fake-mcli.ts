@@ -1,6 +1,6 @@
 // A stand-in for `mcli.js --api` that speaks the same line protocol (see MCLI docs/API.md).
 // FAKE_EXIT_AT_START=1 exits immediately, FAKE_CRASH_MS=<n> exits <n> ms after "ready".
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -54,6 +54,28 @@ const status = () => ({
   updates: null,
 });
 
+/** A small stand-in for MCLI's inspect: the software is recognised by the jar's name. */
+function inspect(dir: string): Record<string, unknown> {
+  const exists = existsSync(dir);
+  const isDirectory = exists && statSync(dir).isDirectory();
+  const out: Record<string, unknown> = { dir, exists, isDirectory, software: null, javaMajor: 21, eula: 'missing', properties: null, worlds: [], plugins: [], mods: 0, sizeBytes: 1024, managedByMcli: false, files: { velocityToml: false, paperGlobal: false, forwardingSecret: false }, warnings: [] };
+  if (!isDirectory) return out;
+  const names = readdirSync(dir);
+  const types: [string, string][] = [['velocity.jar', 'velocity'], ['spigot.jar', 'spigot'], ['fabric.jar', 'fabric'], ['paper.jar', 'paper'], ['server.jar', 'vanilla']];
+  const found = types.find(([jar]) => names.includes(jar));
+  if (found) out.software = { type: found[1], version: existsSync(join(dir, 'version.txt')) ? readFileSync(join(dir, 'version.txt'), 'utf8').trim() || null : '1.21.8', jar: found[0] };
+  if (existsSync(join(dir, 'eula.txt'))) out.eula = /eula=true/.test(readFileSync(join(dir, 'eula.txt'), 'utf8')) ? 'accepted' : 'declined';
+  const props = join(dir, 'server.properties');
+  if (existsSync(props)) {
+    const t = readFileSync(props, 'utf8');
+    const get = (k: string) => new RegExp(`^${k}=(.*)$`, 'm').exec(t)?.[1];
+    out.properties = { port: Number(get('server-port')) || null, ip: get('server-ip') ?? '', onlineMode: get('online-mode') === undefined ? null : get('online-mode') === 'true', motd: get('motd') ?? null, levelName: get('level-name') ?? null };
+  }
+  out.worlds = names.filter((n) => existsSync(join(dir, n, 'level.dat')));
+  out.files = { velocityToml: existsSync(join(dir, 'velocity.toml')), paperGlobal: existsSync(join(dir, 'config', 'paper-global.yml')), forwardingSecret: existsSync(join(dir, 'forwarding.secret')) };
+  return out;
+}
+
 const memoryRe = /^(\d+)[MG]$/i;
 
 function handle(method: string, p: Record<string, unknown>): unknown {
@@ -95,6 +117,8 @@ function handle(method: string, p: Record<string, unknown>): unknown {
       return status().players;
     case 'versions':
       return p.provider === 'velocity' ? ['4.3.1', '3.5.1'] : ['1.21.8', '1.21.7'];
+    case 'inspect':
+      return inspect(String(p.dir));
     case 'plan':
       return { provider: p.provider, version: p.version, build: '1', channel: p.provider === 'velocity' && p.version === '3.5.1' ? 'RECOMMENDED' : 'STABLE', javaMajor: 21, filename: 'x.jar', size: 1, display: 'x' };
     case 'install':

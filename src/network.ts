@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join, relative, resolve, isAbsolute } from 'node:path';
 import { resolveMcliPath, resolveServerDir, saveConfig, validateServer } from './config';
 import { installAgent, loadManifest, type InstallResult } from './agent/install';
 import { AgentStore, type PendingCommand } from './agent/store';
@@ -11,6 +11,7 @@ import { planRam, type Plan } from './ram/planner';
 import { recommend, type Recommendation } from './ram/recommend';
 import { readSystemMemory, type Pressure, type SystemMemory } from './ram/system';
 import { RamTracker, type RamFrame } from './ram/tracker';
+import { isListening } from './setup/probe';
 import { proxyOf, writeProxyConfig } from './setup/layout';
 import { SetupRunner, type SetupOptions } from './setup/provision';
 import type { NetworkConfig, ServerConfig } from './types';
@@ -53,6 +54,33 @@ export interface AgentView {
   game: AgentGame | null;
   proxy: AgentProxy | null;
   commands: PendingCommand[];
+}
+
+/** What MCNetwork can do with an existing folder. */
+export type ImportSupport = 'full' | 'convert' | 'standalone' | 'proxy' | 'none';
+
+/** MCLI's findings about an existing server folder, plus what that means for joining this network. */
+export interface ImportReport {
+  dir: string;
+  exists: boolean;
+  isDirectory: boolean;
+  software: { type: string; version: string | null; jar: string | null } | null;
+  javaMajor: number | null;
+  eula: 'accepted' | 'declined' | 'missing';
+  properties: { port: number | null; ip: string; onlineMode: boolean | null; motd: string | null; levelName: string | null } | null;
+  worlds: string[];
+  plugins: string[];
+  mods: number;
+  sizeBytes: number;
+  managedByMcli: boolean;
+  files: { velocityToml: boolean; paperGlobal: boolean; forwardingSecret: boolean };
+  warnings: string[];
+  /** full: Paper, joins as it is. convert: Spigot, can become Paper. standalone: managed only. proxy: a Velocity proxy. */
+  support: ImportSupport;
+  /** Reasons why it cannot be imported right now. */
+  issues: string[];
+  /** A free id derived from the folder name. */
+  suggestedId: string;
 }
 
 export interface AppliedAllocation {
@@ -186,6 +214,8 @@ export class Network extends EventEmitter {
   installAgent(id: string): InstallResult {
     this.instance(id);
     const cfg = this.config.servers.find((s) => s.id === id) as ServerConfig;
+    const software = this.instances.get(id)?.status?.software?.type;
+    if (software && software !== 'paper' && software !== 'velocity') throw new Error(`The agent plugin needs Paper or Velocity (this is ${software})`);
     if (!this.config.agent.enabled) throw new Error('The agent plugins are switched off (agent.enabled)');
     if (!this.daemonUrl) throw new Error('The daemon does not know its own address yet');
     const result = installAgent(resolveServerDir(this.dataDir, cfg), cfg.role, this.agentJarsDir, { url: this.daemonUrl, token: this.config.agent.token, serverId: id, intervalSeconds: Math.min(30, this.config.ram.sampleSeconds) });
@@ -195,6 +225,8 @@ export class Network extends EventEmitter {
 
   /** Like installAgent, but a problem is remembered for the dashboard instead of thrown. */
   ensureAgent(id: string): InstallResult | null {
+    const software = this.instances.get(id)?.status?.software?.type;
+    if (software && software !== 'paper' && software !== 'velocity') return null; // nothing to install for Fabric, Forge, Spigot, ...
     try {
       return this.installAgent(id);
     } catch (err) {
@@ -359,6 +391,30 @@ export class Network extends EventEmitter {
     }
     saveConfig(this.dataDir, this.config);
     return { totalMb: this.config.ram.totalMb, reserveMb: this.config.ram.reserveMb };
+  }
+
+  /** Looks into an existing folder (through MCLI) and says whether and how it can join the network. Changes nothing. */
+  async inspectImport(path: string): Promise<ImportReport> {
+    const dir = resolve(path);
+    const found = await this.lookup<Omit<ImportReport, 'support' | 'issues' | 'suggestedId'>>('inspect', { dir });
+    const issues: string[] = [];
+    const type = found.software?.type;
+    const support: ImportSupport = !type ? 'none' : type === 'paper' ? 'full' : type === 'spigot' ? 'convert' : type === 'velocity' ? 'proxy' : 'standalone';
+    if (!found.exists) issues.push('This folder does not exist.');
+    else if (!found.isDirectory) issues.push('This is a file, not a folder.');
+    else if (!found.software) issues.push('No Minecraft server was found in this folder.');
+    const same = this.config.servers.find((s) => resolveServerDir(this.dataDir, s) === dir);
+    if (same) issues.push(`This folder is already the server "${same.id}" in this network.`);
+    const rel = relative(dir, resolve(this.dataDir));
+    if (found.isDirectory && !same && (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)))) issues.push('This folder contains the MCNetwork data folder. Choose the server folder itself.');
+    if (found.software && support !== 'none') {
+      const port = found.properties?.port ?? (type === 'velocity' ? 25565 : 25565);
+      if (!same && (await isListening(port))) issues.push(`Something is listening on port ${port}, probably this server. Stop it first, then import.`);
+    }
+    const base = basename(dir).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 28) || 'server';
+    let suggestedId = base;
+    for (let i = 2; this.config.servers.some((s) => s.id === suggestedId); i++) suggestedId = `${base}-${i}`;
+    return { ...found, support, issues, suggestedId };
   }
 
   /** Per server: is the heap too big, too small or right, judged by what the plugins measured over the last 24 hours. */

@@ -1,3 +1,6 @@
+/** Separates the servers MCNetwork writes from the ones an imported proxy already had. */
+const KEPT_MARKER = '# Servers that were already in this file:';
+
 const tomlString = (s: string): string => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 export interface VelocitySettings {
@@ -9,6 +12,8 @@ export interface VelocitySettings {
   servers: Record<string, string>;
   /** Servers players join first, in order. */
   tryOrder: string[];
+  /** Keep the servers the file already lists (an imported proxy) and add the network's servers to them. */
+  keepServers?: boolean;
 }
 
 /** Sets `key = value` before the first [section]; adds the key when it is missing. */
@@ -45,14 +50,30 @@ export function patchVelocityToml(text: string, s: VelocitySettings): string {
   if (s.motd !== undefined) setTopLevel(lines, 'motd', tomlString(s.motd));
   if (s.forwardingMode) setTopLevel(lines, 'player-info-forwarding-mode', tomlString(s.forwardingMode));
 
+  const servers = sectionBody(lines, 'servers');
+  const kept: string[] = [];
+  const keptTry: string[] = [];
+  if (s.keepServers && servers) {
+    const body = lines.slice(servers[0], servers[1]);
+    // after our first rewrite, only the lines below the marker are the user's own; before it, everything is
+    const marker = body.findIndex((l) => l.trim() === KEPT_MARKER);
+    const own = marker >= 0 ? body.slice(marker + 1) : body;
+    for (const line of own) {
+      const m = /^\s*("?[\w.-]+"?)\s*=\s*"([^"]*)"\s*(#.*)?$/.exec(line);
+      if (m && m[1] !== 'try' && !(m[1].replace(/"/g, '') in s.servers)) kept.push(line.trim());
+    }
+    const keptNames = kept.map((l) => /^"?([\w.-]+)"?/.exec(l)?.[1] ?? '');
+    const t = /^\s*try\s*=\s*\[([^\]]*)\]/m.exec(body.join('\n'));
+    for (const n of ((t?.[1] ?? '').match(/"([^"]+)"/g) ?? []).map((x) => x.replace(/"/g, ''))) if (!s.tryOrder.includes(n) && keptNames.includes(n)) keptTry.push(n);
+  }
   const block = [
     '# Managed by MCNetwork: edit the servers in the dashboard.',
     ...Object.entries(s.servers).map(([name, addr]) => `${name} = ${tomlString(addr)}`),
+    ...(kept.length ? [KEPT_MARKER, ...kept] : []),
     '',
-    `try = [${s.tryOrder.map((n) => tomlString(n)).join(', ')}]`,
+    `try = [${[...s.tryOrder, ...keptTry].map((n) => tomlString(n)).join(', ')}]`,
     '',
   ];
-  const servers = sectionBody(lines, 'servers');
   if (servers) lines.splice(servers[0], servers[1] - servers[0], ...block);
   else lines.push('', '[servers]', ...block);
 

@@ -6,6 +6,7 @@ import type { McliInstance } from '../mcli/instance';
 import type { Network } from '../network';
 import type { MemorySettings, ServerConfig } from '../types';
 import { BACKEND_HOST, PAPER_GLOBAL, prepareBackendFiles, proxyOf, readForwardingSecret, VELOCITY_TOML, writeBackendForwarding, writeProxyConfig } from './layout';
+import { importServer, IMPORT_MODES, isAbsolutePath, type ImportOutcome, type ImportSpec } from './importer';
 import { allocatePorts, PROXY_PORT } from './ports';
 
 export interface SetupBackend {
@@ -16,10 +17,12 @@ export interface SetupBackend {
   memory?: MemorySettings;
   /** Players join this one first (default: the first backend). */
   entry?: boolean;
+  /** An existing server to bring in instead of installing a new one. */
+  import?: ImportSpec;
 }
 
 export interface SetupRequest {
-  proxy: { version?: string; port?: number; motd?: string };
+  proxy: { version?: string; port?: number; motd?: string; import?: ImportSpec };
   backends: SetupBackend[];
   ram?: { reserveMb?: number };
   /** The user accepts the Minecraft EULA (https://aka.ms/MinecraftEULA) for the backend servers. */
@@ -28,7 +31,7 @@ export interface SetupRequest {
   start?: boolean;
 }
 
-export type StepStatus = 'pending' | 'running' | 'done' | 'failed';
+export type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
 export interface SetupStep {
   id: string;
@@ -62,6 +65,19 @@ export function paperSupported(version: string): boolean {
   return !m || Number(m[1]) >= 19;
 }
 
+function parseImport(v: unknown, what: string): ImportSpec | undefined {
+  if (v === undefined || v === null) return undefined;
+  const o = obj(v, what);
+  if (!isAbsolutePath(o.path)) throw new Error(`"${what}.path" must be the full path of the server folder`);
+  if (typeof o.mode !== 'string' || !(IMPORT_MODES as string[]).includes(o.mode)) throw new Error(`"${what}.mode" must be one of ${IMPORT_MODES.join(', ')}`);
+  const spec: ImportSpec = { path: o.path, mode: o.mode as ImportSpec['mode'] };
+  if (o.convertToPaper === true) spec.convertToPaper = true;
+  if (o.standalone === true) spec.standalone = true;
+  const version = optStr(o.version, `${what}.version`);
+  if (version) spec.version = version;
+  return spec;
+}
+
 /** Checks the wizard input; throws an Error that tells the user what to change. */
 export function parseSetupRequest(input: unknown, existingIds: string[], hasProxy = false): SetupRequest {
   const body = obj(input, 'request');
@@ -76,14 +92,17 @@ export function parseSetupRequest(input: unknown, existingIds: string[], hasProx
     if (typeof b.id !== 'string' || !ID_RE.test(b.id)) throw new Error(`backends[${i}].id must be 1-32 characters: lowercase letters, digits, "-" or "_"`);
     if (seen.has(b.id)) throw new Error(`The server id "${b.id}" is used twice (or reserved)`);
     seen.add(b.id);
-    const version = optStr(b.version, `backends[${i}].version`);
+    const imported = parseImport(b.import, `backends[${i}].import`);
+    const version = imported ? undefined : optStr(b.version, `backends[${i}].version`);
     if (version && !paperSupported(version)) throw new Error(`Paper ${version} is too old: the network needs Paper 1.19 or newer`);
-    return { id: b.id, name: optStr(b.name, `backends[${i}].name`), version, memory: b.memory as MemorySettings | undefined, entry: b.entry === true };
+    return { id: b.id, name: optStr(b.name, `backends[${i}].name`), version, memory: b.memory as MemorySettings | undefined, entry: b.entry === true, import: imported };
   });
   for (const id of seen) if (existingIds.includes(id)) throw new Error(`A server "${id}" already exists in this network`);
   const ram = body.ram === undefined ? undefined : obj(body.ram, 'ram');
+  const proxyImport = parseImport(proxy.import, 'proxy.import');
+  if (proxyImport && hasProxy) throw new Error('This network already has a proxy');
   return {
-    proxy: { version: optStr(proxy.version, 'proxy.version'), port, motd: optStr(proxy.motd, 'proxy.motd') },
+    proxy: { version: optStr(proxy.version, 'proxy.version'), port, motd: optStr(proxy.motd, 'proxy.motd'), import: proxyImport },
     backends,
     ram: ram ? { reserveMb: typeof ram.reserveMb === 'number' ? ram.reserveMb : undefined } : undefined,
     acceptEula: true,
@@ -125,14 +144,22 @@ export class SetupRunner extends EventEmitter {
     if (this.running) throw new Error('A setup is already running');
     const hasProxy = proxyOf(this.net.config) !== undefined;
     const req = parseSetupRequest(input, this.net.config.servers.map((s) => s.id), hasProxy);
-    const ids = [...(hasProxy ? [] : ['proxy']), ...req.backends.map((b) => b.id)];
+    const newProxy = !hasProxy && !req.proxy.import;
+    const fresh = req.backends.filter((b) => !b.import);
+    const imported = req.backends.filter((b) => b.import);
+    const pending = (id: string, label: string): SetupStep => ({ id, label, status: 'pending' });
     const steps: SetupStep[] = [
-      { id: 'create', label: 'Create the servers', status: 'pending' },
-      { id: 'ram', label: 'Plan the RAM', status: 'pending' },
-      ...ids.map((id) => ({ id: `install:${id}`, label: `Install ${id === 'proxy' ? 'Velocity' : `Paper for "${id}"`}`, status: 'pending' as const })),
-      ...ids.map((id) => ({ id: `prepare:${id}`, label: `First start of "${id}" (creates its settings)`, status: 'pending' as const })),
-      { id: 'connect', label: 'Connect the servers to the proxy', status: 'pending' },
-      ...(req.start ? [{ id: 'start', label: 'Start the network', status: 'pending' as const }] : []),
+      ...(newProxy || fresh.length ? [pending('create', 'Create the servers')] : []),
+      ...(req.proxy.import && !hasProxy ? [pending('import:proxy', 'Import your Velocity proxy')] : []),
+      ...imported.map((b) => pending(`import:${b.id}`, `Import "${b.id}" (${b.import?.mode})`)),
+      pending('ram', 'Plan the RAM'),
+      ...(newProxy ? [pending('install:proxy', 'Install Velocity')] : []),
+      ...fresh.map((b) => pending(`install:${b.id}`, `Install Paper for "${b.id}"`)),
+      ...imported.filter((b) => b.import?.convertToPaper).map((b) => pending(`install:${b.id}`, `Switch "${b.id}" to Paper`)),
+      ...(!hasProxy ? [pending('prepare:proxy', 'First start of "proxy" (creates its settings)')] : []),
+      ...[...fresh, ...imported.filter((b) => !b.import?.standalone)].map((b) => pending(`prepare:${b.id}`, `First start of "${b.id}" (creates its settings)`)),
+      pending('connect', 'Connect the servers to the proxy'),
+      ...(req.start ? [pending('start', 'Start the network')] : []),
     ];
     this.state = { id: ++this.counter, status: 'running', startedAt: Date.now(), steps };
     this.emit('change', this.state);
@@ -156,6 +183,15 @@ export class SetupRunner extends EventEmitter {
     }
   }
 
+  /** Marks a planned step as not needed (for example a first start for a server that already has its settings). */
+  private skip(id: string, why: string): void {
+    const step = this.state?.steps.find((x) => x.id === id);
+    if (!step || step.status !== 'pending') return;
+    step.status = 'skipped';
+    step.detail = why;
+    this.emit('change', this.state);
+  }
+
   private async run(req: SetupRequest): Promise<void> {
     const state = this.state as SetupState;
     try {
@@ -170,23 +206,47 @@ export class SetupRunner extends EventEmitter {
 
   private async execute(req: SetupRequest): Promise<void> {
     const { net } = this;
+    const hasProxy = proxyOf(net.config) !== undefined;
     const proxyPort = req.proxy.port ?? PROXY_PORT;
     const configured: ServerConfig[] = [];
+    const standalone = new Set<string>();
+    const installs: { cfg: ServerConfig; provider: 'velocity' | 'paper'; version?: string }[] = [];
+    const fresh = req.backends.filter((b) => !b.import);
+    const imported = req.backends.filter((b) => b.import);
+    const entryWanted = req.backends.find((b) => b.entry && !(b.import && b.import.standalone))?.id;
 
-    await this.step('create', async () => {
-      const taken = [...net.config.servers.flatMap((s) => (s.port ? [s.port] : [])), proxyPort];
-      const ports = await allocatePorts(req.backends.length, taken, undefined, this.opts.isPortFree);
-      const hasProxy = proxyOf(net.config) !== undefined;
-      if (!hasProxy) await net.addServer({ id: 'proxy', name: 'Proxy', role: 'proxy', port: proxyPort });
-      // somebody has to be the first stop for players: the chosen server, else the first new one if none exists yet
-      const hasEntry = net.config.servers.some((s) => s.entry);
-      const entry = req.backends.some((b) => b.entry) || hasEntry ? undefined : req.backends[0].id;
-      for (const [i, b] of req.backends.entries()) {
-        await net.addServer({ id: b.id, name: b.name ?? b.id, role: 'backend', port: ports[i], memory: b.memory, entry: b.entry || b.id === entry || undefined });
-      }
-      configured.push(...net.config.servers.filter((s) => (s.role === 'proxy' && !hasProxy) || req.backends.some((b) => b.id === s.id)));
-      return `${configured.length} servers`;
-    });
+    if (this.state?.steps.some((s) => s.id === 'create')) {
+      await this.step('create', async () => {
+        const taken = [...net.config.servers.flatMap((s) => (s.port ? [s.port] : [])), proxyPort];
+        const ports = await allocatePorts(fresh.length, taken, undefined, this.opts.isPortFree);
+        const newProxy = !hasProxy && !req.proxy.import;
+        if (newProxy) await net.addServer({ id: 'proxy', name: 'Proxy', role: 'proxy', port: proxyPort });
+        // somebody has to be the first stop for players: the chosen server, else the first new one if none exists yet
+        const hasEntry = net.config.servers.some((s) => s.entry) || entryWanted !== undefined;
+        const entry = hasEntry ? undefined : fresh[0]?.id;
+        for (const [i, b] of fresh.entries()) {
+          await net.addServer({ id: b.id, name: b.name ?? b.id, role: 'backend', port: ports[i], memory: b.memory, entry: b.entry || b.id === entry || undefined });
+        }
+        configured.push(...net.config.servers.filter((s) => (s.role === 'proxy' && newProxy) || fresh.some((b) => b.id === s.id)));
+        return `${configured.length} servers`;
+      });
+    }
+
+    // existing servers come in before the RAM is planned, so that they are part of the plan
+    const outcomes = new Map<string, ImportOutcome>();
+    const bring = async (id: string, role: 'proxy' | 'backend', spec: ImportSpec, b?: SetupBackend): Promise<void> => {
+      await this.step(`import:${id}`, async () => {
+        const entry = b ? b.entry === true || (entryWanted === undefined && !net.config.servers.some((s) => s.entry) && !spec.standalone) : false;
+        const outcome = await importServer(net, spec, { id, name: b?.name ?? (role === 'proxy' ? 'Proxy' : id), role, memory: b?.memory, entry, acceptEula: req.acceptEula, isPortFree: this.opts.isPortFree });
+        outcomes.set(id, outcome);
+        configured.push(outcome.config);
+        if (outcome.standalone) standalone.add(id);
+        if (outcome.convertTo) installs.push({ cfg: outcome.config, provider: 'paper', version: outcome.convertTo.version });
+        return outcome.detail;
+      });
+    };
+    if (req.proxy.import && !hasProxy) await bring('proxy', 'proxy', req.proxy.import);
+    for (const b of imported) await bring(b.id, 'backend', b.import as ImportSpec, b);
     if (req.ram?.reserveMb !== undefined) net.config.ram.reserveMb = req.ram.reserveMb;
 
     await this.step('ram', async () => {
@@ -196,27 +256,35 @@ export class SetupRunner extends EventEmitter {
       return plan.allocations.map((a) => `${a.id} ${a.xmxMb} MB`).join(', ');
     });
 
-    const versions: Record<string, string> = {};
-    for (const s of configured) {
-      const backend = req.backends.find((b) => b.id === s.id);
-      const provider = s.role === 'proxy' ? 'velocity' : 'paper';
+    for (const s of configured.filter((c) => !outcomes.has(c.id))) installs.push({ cfg: s, provider: s.role === 'proxy' ? 'velocity' : 'paper', version: s.role === 'proxy' ? req.proxy.version : fresh.find((b) => b.id === s.id)?.version });
+    for (const { cfg: s, provider, version: wanted } of installs) {
       await this.step(`install:${s.id}`, async () => {
-        const version = (s.role === 'proxy' ? req.proxy.version : backend?.version) || (await net.defaultVersion(provider));
-        versions[s.id] = version;
-        const ok = await net.instance(s.id).request<boolean>('install', { provider, version, backupFirst: false }, 600_000);
+        const version = wanted || (await net.defaultVersion(provider));
+        const ok = await net.instance(s.id).request<boolean>('install', { provider, version, backupFirst: outcomes.has(s.id) }, 600_000); // a converted server has a world: back it up first
         if (!ok) throw new Error(`The download of ${provider} ${version} failed - see the log of "${s.id}"`);
         if (s.role === 'backend') await net.instance(s.id).request('acceptEula'); // the user accepted the EULA in the request
         const agent = net.ensureAgent(s.id); // the plugin must be in place before the first start
         return `${provider} ${version}${agent ? ` + agent ${agent.version}` : ' (agent plugin not installed: see the server in the dashboard)'}`;
       });
     }
+    // imported Paper and Velocity servers did not go through an install step: they get their plugin here
+    for (const [id] of outcomes) {
+      if (!standalone.has(id) && !installs.some((i) => i.cfg.id === id)) net.ensureAgent(id);
+    }
 
     // Servers write their own default settings on the first start; those files are patched afterwards.
     for (const s of configured) {
-      await this.step(`prepare:${s.id}`, async () => {
+      const id = `prepare:${s.id}`;
+      if (standalone.has(s.id)) {
+        this.skip(id, 'not needed');
+        continue;
+      }
+      await this.step(id, async () => {
         const dir = resolveServerDir(net.dataDir, s);
-        if (s.role === 'backend') prepareBackendFiles(dir, s);
-        await this.bootstrap(net.instance(s.id), join(dir, s.role === 'proxy' ? VELOCITY_TOML : PAPER_GLOBAL));
+        const file = join(dir, s.role === 'proxy' ? VELOCITY_TOML : PAPER_GLOBAL);
+        if (s.role === 'backend' && !outcomes.has(s.id)) prepareBackendFiles(dir, s);
+        if (existsSync(file) && (s.role !== 'proxy' || existsSync(join(dir, 'forwarding.secret')))) return 'its settings already exist';
+        await this.bootstrap(net.instance(s.id), file);
       });
     }
 
@@ -224,12 +292,15 @@ export class SetupRunner extends EventEmitter {
       const proxy = proxyOf(net.config) as ServerConfig;
       const secret = readForwardingSecret(net.dataDir, proxy);
       if (!secret) throw new Error('Velocity did not create forwarding.secret');
-      for (const s of configured.filter((c) => c.role === 'backend')) {
+      for (const s of configured.filter((c) => c.role === 'backend' && !standalone.has(c.id))) {
         if (!writeBackendForwarding(resolveServerDir(net.dataDir, s), secret)) throw new Error(`"${s.id}" did not create ${PAPER_GLOBAL}`);
       }
-      if (configured.some((c) => c.role === 'proxy')) writeProxyConfig(net.dataDir, net.config, { bind: `0.0.0.0:${proxyPort}`, motd: req.proxy.motd, forwardingMode: 'modern' });
-      else await net.syncProxy(); // an existing proxy learns about the new servers (and reloads if it runs)
-      return `players join via ${BACKEND_HOST}`;
+      const newProxy = configured.find((c) => c.role === 'proxy');
+      if (newProxy) {
+        const settings = outcomes.has('proxy') ? { forwardingMode: 'modern' as const, ...(req.proxy.motd ? { motd: req.proxy.motd } : {}) } : { bind: `0.0.0.0:${proxyPort}`, motd: req.proxy.motd, forwardingMode: 'modern' as const };
+        writeProxyConfig(net.dataDir, net.config, settings);
+      } else await net.syncProxy(); // an existing proxy learns about the new servers (and reloads if it runs)
+      return standalone.size ? `players join via ${BACKEND_HOST}; ${[...standalone].join(', ')} stay outside the proxy` : `players join via ${BACKEND_HOST}`;
     });
 
     if (req.start) {

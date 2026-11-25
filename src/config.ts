@@ -48,7 +48,12 @@ export function validateServer(input: unknown, dataDir: string): ServerConfig {
   const role = s.role === undefined ? 'backend' : s.role;
   if (role !== 'proxy' && role !== 'backend') throw new Error('"role" must be "proxy" or "backend"');
   const dir = s.dir === undefined ? join('servers', s.id) : s.dir;
-  if (typeof dir !== 'string' || !insideDataDir(dataDir, dir)) throw new Error('"dir" must be a relative folder inside the data directory');
+  if (s.external !== undefined && typeof s.external !== 'boolean') throw new Error('"external" must be true or false');
+  if (s.standalone !== undefined && typeof s.standalone !== 'boolean') throw new Error('"standalone" must be true or false');
+  if (typeof dir !== 'string') throw new Error('"dir" must be a folder');
+  if (s.external === true) {
+    if (!isAbsolute(dir) || dir.split(/[\\/]/).includes('..')) throw new Error('"dir" of an imported server must be an absolute folder without ".."');
+  } else if (!insideDataDir(dataDir, dir)) throw new Error('"dir" must be a relative folder inside the data directory');
   if (s.name !== undefined && typeof s.name !== 'string') throw new Error('"name" must be a string');
   if (s.autoStart !== undefined && typeof s.autoStart !== 'boolean') throw new Error('"autoStart" must be true or false');
   const out: ServerConfig = { id: s.id, name: typeof s.name === 'string' && s.name ? s.name : s.id, role, dir, autoStart: s.autoStart !== false, memory: validateMemory(s.memory) };
@@ -56,6 +61,9 @@ export function validateServer(input: unknown, dataDir: string): ServerConfig {
     if (typeof s.port !== 'number' || !Number.isInteger(s.port) || s.port < 1 || s.port > 65535) throw new Error('"port" must be a whole number from 1 to 65535');
     out.port = s.port;
   }
+  if (s.imported === true) out.imported = true;
+  if (s.external === true) out.external = true;
+  if (s.standalone === true) out.standalone = true;
   if (s.entry !== undefined) {
     if (typeof s.entry !== 'boolean') throw new Error('"entry" must be true or false');
     if (s.entry) out.entry = true;

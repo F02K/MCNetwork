@@ -187,6 +187,7 @@ td.num, th.num { text-align: right; }
 .progress-item { display: flex; gap: .7rem; align-items: baseline; padding: .5rem .7rem; border-radius: 8px; background: var(--surface-2); }
 .progress-item .ic { width: 1.2em; text-align: center; flex: none; }
 .progress-item.running { background: var(--accent-soft); }
+.progress-item.skipped { opacity: .65; }
 .progress-item.done .ic { color: var(--good); }
 .progress-item.failed { background: var(--bad-bg); }
 .progress-item.failed .ic { color: var(--bad); }
