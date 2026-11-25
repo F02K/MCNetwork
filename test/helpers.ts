@@ -17,8 +17,10 @@ export function tmp(name = 'mcnetwork'): string {
   return dir;
 }
 
-after(() => {
-  for (const d of created) rmSync(d, { recursive: true, force: true });
+// Not an after() hook: this one is registered first, so it would run before the hooks that stop the servers.
+// Windows cannot delete the folder of a running process, and a failing hook skips the ones after it.
+process.on('exit', () => {
+  for (const d of created) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

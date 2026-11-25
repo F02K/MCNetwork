@@ -6,8 +6,8 @@ import { patchVelocityToml } from '../src/setup/velocity';
 import { allocatePorts, portFree } from '../src/setup/ports';
 import { createServer } from 'node:net';
 
-// the file Velocity 3.5.1 generated on its first start
-const REAL = readFileSync(join(process.cwd(), 'test', 'fixtures', 'velocity-3.5.1.toml'), 'utf8');
+// the file Velocity 3.5.1 generated on its first start (Git may check it out with CRLF on Windows)
+const REAL = readFileSync(join(process.cwd(), 'test', 'fixtures', 'velocity-3.5.1.toml'), 'utf8').replace(/\r\n/g, '\n');
 const settings = { bind: '0.0.0.0:25565', forwardingMode: 'modern' as const, servers: { lobby: '127.0.0.1:30066', survival: '127.0.0.1:30067' }, tryOrder: ['lobby'] };
 
 describe('patchVelocityToml (real Velocity 3.5.1 file)', () => {
