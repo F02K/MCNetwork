@@ -1,4 +1,5 @@
 import type { Network } from '../network';
+import { changePort, portOverview } from '../ports/manager';
 import { HttpError, type Route } from './router';
 
 function str(body: Record<string, unknown>, key: string): string {
@@ -69,6 +70,22 @@ export function buildRoutes(net: Network): Route[] {
         }),
     },
 
+    { method: 'GET', path: '/api/ports', handler: () => guarded(() => portOverview(net)) },
+    {
+      method: 'POST',
+      path: `${id}/port`,
+      handler: ({ params, body }) => guarded(() => changePort(net, params.id, { port: body.port === undefined ? undefined : Number(body.port), localOnly: body.localOnly === true })),
+    },
+    { method: 'GET', path: '/api/ports/access', handler: () => guarded(() => net.access.info()) },
+    { method: 'POST', path: '/api/ports/upnp/discover', handler: () => guarded(() => net.access.discover()) },
+    { method: 'POST', path: '/api/ports/upnp/open', handler: () => guarded(() => net.access.open()) },
+    { method: 'POST', path: '/api/ports/upnp/close', handler: () => guarded(async () => (await net.access.close(), { closed: true })) },
+    {
+      method: 'POST',
+      path: '/api/ports/check',
+      // sends the public address and port to an outside service: only with an explicit "confirm"
+      handler: ({ body }) => guarded(() => (body.confirm === true ? net.access.check() : Promise.reject(new HttpError(400, 'This sends your public address and port to an outside service. Send {"confirm": true} to go ahead.')))),
+    },
     { method: 'GET', path: '/api/agent', handler: () => ({ enabled: net.config.agent.enabled, bundledVersion: net.bundledAgentVersion }) },
     { method: 'POST', path: `${id}/agent/install`, handler: ({ params }) => guarded(() => net.installAgent(params.id)) },
     { method: 'POST', path: `${id}/agent/command`, handler: ({ params, body }) => guarded(() => ({ id: net.agentCommand(params.id, str(body, 'type'), body) })) },

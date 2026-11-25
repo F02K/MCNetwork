@@ -57,11 +57,17 @@ export interface AgentConfigSettings {
   token: string;
 }
 
+export interface PortsConfig {
+  /** Keep the proxy's port open on the router with UPnP (while the daemon runs). */
+  upnp: boolean;
+}
+
 export interface NetworkConfig {
   /** Path to mcli.js (relative paths are resolved against the data directory). */
   mcliPath: string;
   http: HttpConfig;
   ram: RamConfig;
   agent: AgentConfigSettings;
+  ports: PortsConfig;
   servers: ServerConfig[];
 }

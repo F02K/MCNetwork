@@ -12,6 +12,7 @@ import { recommend, type Recommendation } from './ram/recommend';
 import { readSystemMemory, type Pressure, type SystemMemory } from './ram/system';
 import { RamTracker, type RamFrame } from './ram/tracker';
 import { isListening } from './setup/probe';
+import { PortAccess, type PortTools } from './ports/access';
 import { proxyOf, writeProxyConfig } from './setup/layout';
 import { SetupRunner, type SetupOptions } from './setup/provision';
 import type { NetworkConfig, ServerConfig } from './types';
@@ -24,6 +25,8 @@ export interface NetworkOptions {
   instance?: Partial<InstanceOptions>;
   systemMemory?: () => SystemMemory;
   setup?: SetupOptions;
+  /** Test hooks for UPnP, firewall detection and the reachability check. */
+  portTools?: PortTools;
   /** Folder with the agent plugin jars and manifest.json (default: ../agent/jars next to the bundle). */
   agentJarsDir?: string;
 }
@@ -103,6 +106,7 @@ export class Network extends EventEmitter {
   private saveTimer: NodeJS.Timeout | null = null;
   readonly setup: SetupRunner;
   readonly agents = new AgentStore();
+  readonly access: PortAccess;
   /** Where the plugins reach this daemon; set once the HTTP server listens. */
   daemonUrl = '';
   private agentErrors = new Map<string, string>();
@@ -118,6 +122,7 @@ export class Network extends EventEmitter {
     super();
     this.readMemory = opts.systemMemory ?? readSystemMemory;
     this.tracker.load(join(dataDir, HISTORY_FILE));
+    this.access = new PortAccess(this, opts.portTools);
     this.setup = new SetupRunner(this, opts.setup);
     this.setup.on('change', (state) => this.emit('setup', state));
     this.agents.on('report', (r: { serverId: string }) => {
@@ -138,6 +143,7 @@ export class Network extends EventEmitter {
     for (const s of this.startOrder()) {
       if (s.autoStart) await this.startServer(s.id).catch(() => undefined);
     }
+    void this.access.start();
     this.sampleRam();
     this.sampleTimer = setInterval(() => this.sampleRam(), this.config.ram.sampleSeconds * 1000);
     this.saveTimer = setInterval(() => this.saveHistory(), 60_000);
@@ -154,6 +160,7 @@ export class Network extends EventEmitter {
     for (const role of ['proxy', 'backend'] as const) {
       await Promise.all(order.filter((s) => s.role === role).map(async (s) => this.instances.get(s.id)?.disconnect()));
     }
+    await this.access.stop();
     await this.util?.disconnect();
     this.saveHistory();
   }
@@ -316,6 +323,18 @@ export class Network extends EventEmitter {
     this.config.servers[index] = next;
     saveConfig(this.dataDir, this.config);
     await this.syncProxy();
+    this.emit('servers');
+    return this.view(id);
+  }
+
+  /** Records a new port for a server and brings the proxy's server list up to date (the files were changed by the caller). */
+  async setPort(id: string, port: number): Promise<ServerView> {
+    const cfg = this.config.servers.find((s) => s.id === id);
+    if (!cfg) throw new Error(`Unknown server "${id}"`);
+    cfg.port = port;
+    saveConfig(this.dataDir, this.config);
+    await this.syncProxy();
+    if (cfg.role === 'proxy') await this.access.refresh(); // the router forwards the new port from now on
     this.emit('servers');
     return this.view(id);
   }

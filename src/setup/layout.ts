@@ -46,6 +46,38 @@ export function writeProxyConfig(dataDir: string, cfg: NetworkConfig, extra: Pro
   return true;
 }
 
+/** Address a game server listens on, from server.properties ('0.0.0.0' = every address). */
+export function backendHost(dir: string): string {
+  const file = join(dir, 'server.properties');
+  const m = existsSync(file) ? /^server-ip=(.*)$/m.exec(readFileSync(file, 'utf8')) : null;
+  return m?.[1].trim() || '0.0.0.0';
+}
+
+/** Address and port of the proxy, from `bind` in velocity.toml. */
+export function proxyBind(dir: string): { host: string; port: number } | null {
+  const file = join(dir, VELOCITY_TOML);
+  const m = existsSync(file) ? /^\s*bind\s*=\s*"([^"]*):(\d+)"/m.exec(readFileSync(file, 'utf8')) : null;
+  return m ? { host: m[1] || '0.0.0.0', port: Number(m[2]) } : null;
+}
+
+/** Moves the proxy to another port: `bind`, and the query port when it was the same. */
+export function setProxyPort(text: string, oldPort: number, newPort: number): string {
+  let section = '';
+  return text
+    .split('\n')
+    .map((line) => {
+      const header = /^\s*\[([^\]]+)\]/.exec(line);
+      if (header) section = header[1];
+      if (section === '' && /^\s*bind\s*=/.test(line)) return line.replace(/:(\d+)"/, `:${newPort}"`);
+      if (section === 'query') {
+        const m = /^(\s*port\s*=\s*)(\d+)/.exec(line);
+        if (m && Number(m[2]) === oldPort) return `${m[1]}${newPort}`;
+      }
+      return line;
+    })
+    .join('\n');
+}
+
 export function readForwardingSecret(dataDir: string, proxy: ServerConfig): string | null {
   const file = join(resolveServerDir(dataDir, proxy), FORWARDING_SECRET);
   return existsSync(file) ? readFileSync(file, 'utf8').trim() || null : null;
