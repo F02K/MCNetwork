@@ -33,6 +33,11 @@ describe('recommend', () => {
     assert.equal(r.deltaMb, 8192 - 1216);
     assert.equal(r.peakLiveMb, 700);
     assert.equal(r.peakUsedMb, 1500);
+    assert.equal(r.peakPlayers, 0);
+    assert.match(r.reason, /Nobody was online/);
+    const [busy] = recommend(frames(100, { maxMb: 8192, liveSetMb: 700, heapUsedMb: 1500, players: 12 }), ['a'], { now });
+    assert.equal(busy.peakPlayers, 12);
+    assert.doesNotMatch(busy.reason, /Nobody was online/);
   });
 
   it('warns when the heap is nearly full even after garbage collection', () => {

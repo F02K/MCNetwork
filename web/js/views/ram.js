@@ -6,13 +6,13 @@ import { attempt, busyButton, pressureBadge } from '../ui.js';
 import { debounce, fill, fmtMb, h, parseMb } from '../util.js';
 
 const RANGES = [[15, '15 min'], [60, '1 h'], [360, '6 h'], [1440, '24 h']];
-const REASON = { share: () => t('by share'), pinned: () => t('fixed'), min: () => t('minimum'), max: () => t('maximum') };
 
 export function mount(root) {
   let minutes = 60;
   let asTable = false;
   let plan = null;
   let peaks = {};
+  let recs = {};
   let applied = null;
   const chartBox = h('div');
   const planBox = h('div');
@@ -25,7 +25,10 @@ export function mount(root) {
   };
 
   const loadPlan = async () => {
-    [plan, { peaks24h: peaks }] = await Promise.all([get('/api/ram/plan'), get('/api/ram')]);
+    const [p, ram, list] = await Promise.all([get('/api/ram/plan'), get('/api/ram'), get('/api/ram/recommendations')]);
+    plan = p;
+    peaks = ram.peaks24h;
+    recs = Object.fromEntries(list.map((r) => [r.id, r]));
     renderPlan();
   };
 
@@ -33,6 +36,24 @@ export function mount(root) {
     applied = await attempt(() => post('/api/ram/plan/apply'));
     await refreshNetwork();
     await loadPlan();
+  };
+
+  /** What the plugins measured says about this server's heap: fits, too big (with a button) or too small (with a button). */
+  const advice = (id) => {
+    const r = recs[id];
+    if (!r || r.state === 'collecting') return h('span', { class: 'muted small', title: r?.reason }, t('Collecting data…'));
+    if (r.state === 'ok') return h('span', { class: 'badge good', title: r.reason }, h('span', { 'aria-hidden': 'true' }, '●'), t('Fits'));
+    const cfg = store.servers.get(id)?.config;
+    const take = busyButton(t('Use {size}', { size: fmtMb(r.recommendedMb) }), async () => {
+      if (await attempt(() => put(`/api/servers/${id}`, { memory: { ...(cfg?.memory ?? {}), pinnedMb: r.recommendedMb } }))) {
+        await refreshNetwork();
+        await apply();
+      }
+    }, { cls: 'small', title: r.reason });
+    const badge = r.state === 'too-big'
+      ? h('span', { class: 'badge warn', title: r.reason }, h('span', { 'aria-hidden': 'true' }, '▲'), t('{n} more than needed', { n: fmtMb(r.deltaMb) }))
+      : h('span', { class: 'badge bad', title: r.reason }, h('span', { 'aria-hidden': 'true' }, '⚠'), t('needs about {n} more', { n: fmtMb(r.deltaMb) }));
+    return h('span', { class: 'row', style: 'gap:.4rem' }, badge, take);
   };
 
   const renderPlan = () => {
@@ -50,7 +71,8 @@ export function mount(root) {
         h('td', { class: 'num' }, fmtMb(a.xmsMb)),
         h('td', { class: 'num' }, fmtMb(a.expectedRssMb)),
         h('td', { class: 'num' }, peaks[a.id] ? fmtMb(peaks[a.id]) : '–'),
-        h('td', {}, h('span', { class: 'badge' }, REASON[a.reason]())),
+        h('td', { class: 'num' }, recs[a.id]?.peakLiveMb ? fmtMb(recs[a.id].peakLiveMb) : '–'),
+        h('td', {}, advice(a.id)),
       );
     });
     const restart = applied?.applied?.filter((a) => a.needsRestart) ?? [];
@@ -65,7 +87,7 @@ export function mount(root) {
       ),
       plan.warnings.map((w) => h('div', { class: 'callout bad' }, h('span', { class: 'ico', 'aria-hidden': 'true' }, '⚠'), w)),
       h('div', { class: 'table-wrap' }, h('table', {},
-        h('thead', {}, h('tr', {}, h('th', {}, t('Server')), h('th', { class: 'num' }, t('Share')), h('th', { class: 'num' }, t('Heap now')), h('th', { class: 'num' }, t('Heap planned')), h('th', { class: 'num' }, t('Start heap')), h('th', { class: 'num' }, t('Expected RAM')), h('th', { class: 'num' }, t('Peak 24 h')), h('th', {}, t('Why')))),
+        h('thead', {}, h('tr', {}, h('th', {}, t('Server')), h('th', { class: 'num' }, t('Share')), h('th', { class: 'num' }, t('Heap now')), h('th', { class: 'num' }, t('Heap planned')), h('th', { class: 'num' }, t('Start heap')), h('th', { class: 'num' }, t('Expected RAM')), h('th', { class: 'num' }, t('Peak 24 h')), h('th', { class: 'num', title: t('Heap still in use after garbage collection, highest value in 24 hours') }, t('Needs')), h('th', {}, t('Advice')))),
         h('tbody', {}, rows),
       )),
       h('div', {}, h('div', { class: 'row small', style: 'justify-content:space-between;margin-bottom:4px' }, h('span', { class: 'muted' }, t('Planned total')), h('span', {}, `${fmtMb(plan.expectedRssMb)} ${t('of')} ${fmtMb(plan.budgetMb)}`)), usageBar(plan.expectedRssMb, plan.budgetMb, { neutral: true })),

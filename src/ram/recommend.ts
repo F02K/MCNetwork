@@ -12,6 +12,8 @@ export interface Recommendation {
   /** Highest heap in use after a garbage collection, and highest heap in use at all, in the window. */
   peakLiveMb: number | null;
   peakUsedMb: number | null;
+  /** Most players online at once during the measurements. */
+  peakPlayers: number;
   /** Memory that would be freed (too-big) or is missing (too-small). */
   deltaMb: number;
   samples: number;
@@ -45,7 +47,8 @@ export function recommend(frames: RamFrame[], serverIds: string[], opts: Recomme
     const samples = window.map((f) => f.servers[id]).filter((s) => s && s.state === 'running' && s.liveSetMb !== null && s.heapUsedMb !== null);
     const last = [...window].reverse().find((f) => f.servers[id])?.servers[id];
     const currentMb = last?.maxMb ?? 0;
-    const base = { id, currentMb, samples: samples.length, peakLiveMb: null as number | null, peakUsedMb: null as number | null };
+    const peakPlayers = Math.max(0, ...window.map((f) => f.servers[id]?.players ?? 0));
+    const base = { id, currentMb, samples: samples.length, peakLiveMb: null as number | null, peakUsedMb: null as number | null, peakPlayers };
     if (samples.length < minSamples) {
       return { ...base, state: 'collecting', recommendedMb: null, deltaMb: 0, reason: `Collecting data (${samples.length} of ${minSamples} measurements while running).` };
     }
@@ -53,12 +56,14 @@ export function recommend(frames: RamFrame[], serverIds: string[], opts: Recomme
     const peakUsedMb = Math.max(...samples.map((s) => s.heapUsedMb as number));
     const recommendedMb = Math.max(256, step(peakLiveMb * factor));
     const common = { ...base, peakLiveMb, peakUsedMb, recommendedMb };
+    // an empty server needs less than a busy one: say so, so that nobody shrinks a heap blindly
+    const quiet = peakPlayers === 0 ? ' Nobody was online while this was measured, so a busy server will need more.' : '';
     if (currentMb > 0 && peakUsedMb >= currentMb * 0.92 && peakLiveMb >= currentMb * 0.6) {
       return { ...common, state: 'too-small', deltaMb: recommendedMb - currentMb, reason: `The heap is nearly full even after garbage collection (up to ${Math.round(peakLiveMb)} MB of ${currentMb} MB stay in use).` };
     }
     if (currentMb > recommendedMb * 1.5 && currentMb - recommendedMb >= 512) {
-      return { ...common, state: 'too-big', deltaMb: currentMb - recommendedMb, reason: `At most ${Math.round(peakLiveMb)} MB stay in use; ${currentMb} MB is more than needed.` };
+      return { ...common, state: 'too-big', deltaMb: currentMb - recommendedMb, reason: `At most ${Math.round(peakLiveMb)} MB stay in use; ${currentMb} MB is more than needed.${quiet}` };
     }
-    return { ...common, state: 'ok', deltaMb: 0, reason: 'The heap fits what the server uses.' };
+    return { ...common, state: 'ok', deltaMb: 0, reason: `The heap fits what the server uses.${quiet}` };
   });
 }

@@ -12,7 +12,12 @@ The automated tests use a stand-in for MCLI. Before a release the whole thing is
    - the player lands on the first server, then on the other one,
    - the player's UUID is the same on both servers,
    - MCNetwork shows the player on the proxy and on the current game server.
-5. Add another game server with `POST /api/setup` (no `proxy`): Velocity must reload by itself and the new server must be reachable with `/server`.
+5. The agent plugins (installed by the setup, nothing to do by hand): check that
+   - `GET /api/servers` shows `agent.connected: true` with heap, `liveSetMb`, TPS and worlds for the game servers and the players per server for the proxy,
+   - `POST /api/servers/<id>/gc` returns an order whose result (`heap in use X MB -> Y MB`) appears in `agent.commands`,
+   - with the bot on a game server, `POST /api/servers/<id>/evacuate` moves it to the join-first server (it receives the message; the proxy log shows the switch),
+   - after about 10 minutes `GET /api/ram/recommendations` has advice; clicking *Use …* in the RAM page pins the heap, and after a restart the plugin reports exactly that heap limit.
+6. Add another game server with `POST /api/setup` (no `proxy`): Velocity must reload by itself and the new server must be reachable with `/server`.
 
-Last run (Velocity 3.5.1, Paper 1.21.8): all of the above passed. It found, and led to fixes for: Velocity's default port (25565), Java 25 for Velocity 4.x,
+Last run (Velocity 3.5.1, Paper 1.21.8, agent 0.1.0): all of the above passed. It found, and led to fixes for: Velocity's default port (25565), Java 25 for Velocity 4.x,
 the recommended Velocity build, player counting with colored Paper log lines, and the JVM overhead used by the RAM planner.

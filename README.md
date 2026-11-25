@@ -3,13 +3,14 @@
 Management tool for Minecraft server networks: one proxy (Velocity) and several backend servers on one machine,
 each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking and planning for the whole network.
 
-**Status:** daemon, HTTP API, web dashboard and setup wizard work. Server plugins (real heap/TPS data) and a terminal UI are next.
+**Status:** daemon, HTTP API, web dashboard, setup wizard and the Paper/Velocity plugins work. A terminal UI is next.
 
 ![Dashboard](docs/img/overview.png)
 
 ## What it does today
 
 - **Web dashboard** (`http://localhost:8080`, English and German, light and dark): network overview, live console per server, player list, settings, backups, RAM chart with hover details and a table view.
+- **Plugins that deliver themselves:** MCNetwork ships a Paper and a Velocity plugin ([agent/](agent/README.md)) and installs and configures them in every server, with no manual steps. They report real heap use, TPS, GC and players, and carry out orders: free memory now, or move all players of a server to another one (for example before a restart).
 - **Setup wizard:** choose Velocity, add game servers (lobby, survival, …), see the RAM plan, confirm the Minecraft EULA, and MCNetwork builds the network:
   installs Velocity and Paper, lets each server write its settings once, then connects them (secure "modern" player forwarding with a shared secret,
   local-only backend ports, server list and join-first server in `velocity.toml`). Servers can be added to a running network later; the proxy is told to reload.
@@ -20,14 +21,17 @@ each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking 
   - samples the machine (container limit aware, Linux `MemAvailable`) and every server every few seconds, keeps 24 h of history;
   - plans the heap of every server from the RAM that is really available (`GET /api/ram/plan`) and writes it to the servers (`POST /api/ram/plan/apply`);
   - tells which running servers need a restart to use their new heap;
+  - with the plugins: compares each server's heap with what it really needs (heap still in use after garbage collection) and suggests a smaller or larger one, applied with one click;
   - reports memory pressure (`ok` / `warn` / `critical`).
 - REST API plus a live event stream (server-sent events), optional token.
 
 ![RAM](docs/img/ram.png)
 
+![Performance](docs/img/performance.png)
+
 ## Quick start
 
-Needs Node.js 22 or newer and a built `mcli.js` from MCLI (`npm run build` there).
+Needs Node.js 22 or newer and a built `mcli.js` from MCLI (`npm run build` there). The plugin jars are included (`agent/jars`); rebuilding them needs a JDK and Maven (`npm run build:agent`).
 
 ```
 npm ci
@@ -71,9 +75,14 @@ Every server lives in `data/servers/<id>/`. Removing a server from the network n
 | `memory.weight` | share of the RAM budget (default: proxy 1, backend 4) |
 | `memory.minMb` / `maxMb` | limits for the heap (defaults: proxy 512-1024, backend from 512) |
 | `memory.pinnedMb` | fixed heap, ignores the weight |
+| `agent.enabled` / `agent.token` | the plugins on or off; the secret they report with (generated on the first run) |
 | `port` / `entry` | set by the wizard: the server's Minecraft port, and whether players join it first |
 
 The game servers listen on `127.0.0.1` only (ports from 30066 up), so players can only reach them through the proxy.
+
+## The agent plugins
+
+They are installed when the daemon starts or installs software, and the daemon rewrites their config if its address or token changes. In the dashboard open a server and its **Performance** tab: heap, GC, TPS, world sizes, *Free memory now*, *Move all players*, and *Reinstall plugin*. If a plugin does not report, the tab says why. Set `agent.enabled` to `false` to run without them.
 
 ## About the Minecraft EULA
 

@@ -20,6 +20,8 @@ dashboard / TUI / curl
 | Network manager | `src/network.ts` |
 | HTTP API, event stream, static files | `src/http/` |
 | Setup job, config writers (velocity.toml, server.properties, paper-global.yml) | `src/setup/` |
+| Agent plugins (Java: Paper and Velocity) and their jars | `agent/` |
+| Agent protocol, order queue, plugin installation | `src/agent/` |
 | Dashboard (vanilla ES modules, no build step) | `web/` |
 
 ## Decisions
@@ -33,9 +35,12 @@ dashboard / TUI / curl
 - **Backends are local only.** Game servers bind to `127.0.0.1` with `online-mode=false`; the proxy authenticates players and forwards them with a shared secret.
 - **The planner is conservative.** It counts heap plus JVM overhead as if the heap were full; a real Velocity with a 1 GB heap used about 200 MB, while a small Paper used 0.9-1.2 GB. Real heap data from the plugins will let it plan tighter.
 
+- **Plugins deliver themselves.** The daemon owns the plugin jars and config; nothing is installed by hand. The plugin pushes reports to the daemon (it knows the daemon's address, not the other way round) and orders travel back in the answer, so the daemon never needs to reach into a game server.
+- **Recommendations use the live set.** Heap in use right after garbage collection is what a server needs; heap in use at any moment includes garbage that simply has not been collected yet.
+
 ## Planned
 
 1. More setup choices: other backend software (Fabric/Forge need a forwarding mod), more than one proxy.
-2. Server plugins (Paper and Velocity) that report heap, GC, TPS and player counts, and hand players over on restarts.
-3. RAM recommendations from real heap data, memory-pressure actions (GC on idle servers, restart on leak trend), on-demand start of idle servers.
+2. Autopilot on top of the plugins: memory-pressure actions (GC on idle servers, restart on a leak trend with players moved first), on-demand start of idle servers.
+3. A guided "restart server" that moves the players first (the pieces exist: `evacuate`).
 4. Terminal UI on top of the same API.

@@ -2,6 +2,7 @@ import { get, post, put, del } from '../api.js';
 import { t } from '../i18n.js';
 import { refreshNetwork, store, subscribe } from '../store.js';
 import { attempt, busyButton, roleLabel, stateBadge, stateInfo, toast } from '../ui.js';
+import { performanceTab } from './performance.js';
 import { debounce, fill, fmtDuration, fmtMb, fmtTime, h, parseMb } from '../util.js';
 
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, 'g'); // terminal color codes
@@ -126,7 +127,8 @@ export function mount(root, { id }) {
       const c = consoleTab(id);
       tabCleanup = c.destroy;
       fill(body, c.el);
-    } else if (tab === 'players') fill(body, playersTab(v));
+    } else if (tab === 'performance') fill(body, performanceTab(v, renderTab));
+    else if (tab === 'players') fill(body, playersTab(v));
     else fill(body, h('div', { class: 'stack' }, settingsTab(v, renderTab), softwareCard(v)));
   };
 
@@ -155,7 +157,7 @@ export function mount(root, { id }) {
 
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
   const renderTabs = () => {
-    fill(tabs, ...[['console', t('Console')], ['players', t('Players')], ['settings', t('Settings')]].map(([key, label]) =>
+    fill(tabs, ...[['console', t('Console')], ['performance', t('Performance')], ['players', t('Players')], ['settings', t('Settings')]].map(([key, label]) =>
       h('button', { role: 'tab', 'aria-selected': String(tab === key), onClick: () => { tab = key; renderTabs(); renderTab(); } }, label)));
   };
   fill(root, head, tabs, body);
@@ -165,7 +167,7 @@ export function mount(root, { id }) {
   const onChange = debounce((kind) => {
     if (kind === 'status' || kind === 'servers') {
       renderHead();
-      if (tab === 'players') renderTab();
+      if (tab === 'players' || tab === 'performance') renderTab();
     }
   }, 250);
   const unsub = subscribe(onChange);

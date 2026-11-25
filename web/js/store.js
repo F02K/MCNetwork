@@ -74,6 +74,12 @@ export function connectEvents() {
       emit('status', id);
     }
   });
+  on('agent', ({ id, agent }) => {
+    const v = store.servers.get(id);
+    if (!v) return;
+    v.agent = agent;
+    emit('status', id);
+  });
   on('ram', (frame) => {
     store.ram = frame;
     store.history.push(frame);

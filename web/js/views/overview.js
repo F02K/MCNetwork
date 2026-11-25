@@ -3,6 +3,7 @@ import { usageBar } from '../charts.js';
 import { t } from '../i18n.js';
 import { store, subscribe } from '../store.js';
 import { attempt, busyButton, pressureBadge, roleLabel, stateBadge, stateInfo, toast } from '../ui.js';
+import { tpsBadge } from './performance.js';
 import { debounce, fill, fmtDuration, fmtMb, h, parseMb, rssForHeap } from '../util.js';
 
 const act = (id, action, success) => attempt(() => post(`/api/servers/${id}/${action}`), success);
@@ -32,6 +33,8 @@ function serverCard(view) {
       h('dt', {}, t('Port')), h('dd', {}, cfg.port ?? '–'),
       h('dt', {}, t('Players')), h('dd', {}, live && players ? `${players.count}${players.max ? ` / ${players.max}` : ''}` : '–'),
       h('dt', {}, t('Uptime')), h('dd', {}, live && status.uptimeMs ? fmtDuration(status.uptimeMs) : '–'),
+      view.agent?.connected && view.agent.game && [h('dt', {}, 'TPS'), h('dd', {}, tpsBadge(view.agent.game.tps[0]))],
+      view.agent?.connected && view.agent.jvm && [h('dt', {}, t('Heap in use')), h('dd', {}, `${fmtMb(view.agent.jvm.heapUsedMb)}${view.agent.jvm.liveSetMb ? ` · ${fmtMb(view.agent.jvm.liveSetMb)} ${t('needed')}` : ''}`)],
     ),
     h('div', {},
       h('div', { class: 'row small', style: 'justify-content:space-between;margin-bottom:4px' },

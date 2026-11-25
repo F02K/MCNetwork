@@ -40,21 +40,35 @@ Errors: `{"error": "..."}` with status 400 (invalid input or rejected by MCLI), 
 | GET | `/api/servers/:id/versions?provider=paper&snapshots=false` | |
 | GET | `/api/servers/:id/logs?limit=200`, `/players`, `/settings` | |
 
+## Agent plugins
+
+| Method | Path | Body | Result |
+| --- | --- | --- | --- |
+| GET | `/api/agent` | | `{enabled, bundledVersion}` |
+| POST | `/api/servers/:id/agent/install` | | (re)installs the plugin and its config into the server folder |
+| POST | `/api/servers/:id/gc` | | queues "free memory"; `{id}` of the order |
+| POST | `/api/servers/:id/evacuate` | `to` (default: the join-first server), `message` | asks the proxy plugin to move the players of this server; `{id}` |
+| POST | `/api/servers/:id/agent/command` | `type` (`gc`/`evacuate`), arguments | same, generic |
+| POST | `/api/agent/report` | the plugins' report | used by the plugins only, authenticated with `agent.token`; answers `{ok, commands[]}` |
+
+A server's `agent` field: `{connected, lastSeen, version, bundledVersion, outdated, error, jvm, game, proxy, commands[]}`. Orders show up in `commands` (newest first) with `done`, `ok` and `message` once the plugin reported the outcome (one or two report intervals later).
+
 ## RAM
 
 | Method | Path | Result |
 | --- | --- | --- |
 | GET | `/api/ram` | latest frame and the 24 h peak RSS per server |
 | GET | `/api/ram/history?minutes=60&points=500` | frames, oldest first |
+| GET | `/api/ram/recommendations` | per server: `state` (`collecting`/`ok`/`too-big`/`too-small`), `recommendedMb`, `peakLiveMb`, `peakUsedMb`, `deltaMb`, `reason` (needs the plugins and about 10 minutes of data) |
 | GET | `/api/ram/plan` | planned heap (`xmxMb`, `xmsMb`) per server, budget, warnings |
 | PUT | `/api/ram/config` | `reserveMb`, `totalMb` (0 = automatic) |
 | POST | `/api/ram/plan/preview` | plan for a hypothetical list `{servers: [{id, role, memory}], reserveMb}` |
 | POST | `/api/ram/plan/apply` | writes the plan to every connected MCLI: `{plan, applied[], failed[]}` |
 
-A frame: `{t, system:{totalMb, availableMb, usedMb}, pressure, networkRssMb, servers:{id:{state, rssMb, maxMb, players, heapUsedMb}}}`.
-`heapUsedMb` stays `null` until the server plugin reports it.
+A frame: `{t, system:{totalMb, availableMb, usedMb}, pressure, networkRssMb, servers:{id:{state, rssMb, maxMb, players, heapUsedMb, liveSetMb, tps}}}`.
+`heapUsedMb`, `liveSetMb` and `tps` are `null` for servers whose plugin does not report.
 
 ## Event stream
 
 `GET /api/events` (server-sent events): `hello`, `server` (`{id, event, data}` for every MCLI event, e.g. log lines and state changes),
-`status` (`{id, status}`), `ram` (a frame), `pressure` (`{level}`), `servers` (the list changed), `setup` (the job state).
+`status` (`{id, status}`), `ram` (a frame), `pressure` (`{level}`), `servers` (the list changed), `setup` (the job state), `agent` (`{id, agent}` after every plugin report).

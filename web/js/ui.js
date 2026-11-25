@@ -71,7 +71,7 @@ export const roleLabel = (cfg) => (cfg.role === 'proxy' ? t('Proxy') : t('Game s
 
 /** Disables a button while its async handler runs. */
 export function busyButton(label, handler, opts = {}) {
-  const btn = h('button', { class: `btn ${opts.cls ?? ''}`, type: 'button', title: opts.title, disabled: opts.disabled }, label);
+  const btn = h('button', { class: `btn ${opts.cls ?? ''}`, type: 'button', title: opts.title, disabled: opts.disabled, style: opts.style }, label);
   btn.addEventListener('click', async () => {
     if (opts.confirm && !(await confirmDialog(opts.confirm))) return;
     btn.disabled = true;
