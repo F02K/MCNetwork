@@ -5,3 +5,6 @@ release/
 coverage/
 # runtime data of a local instance
 /data/
+
+# Maven build output of the agent plugins (the finished jars are committed in agent/jars)
+agent/**/target/

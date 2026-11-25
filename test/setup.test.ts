@@ -86,6 +86,12 @@ describe('SetupRunner', () => {
       assert.match(read(dir, 'servers', id, 'config', 'paper-global.yml'), /velocity:\n {4}enabled: true\n {4}online-mode: true\n {4}secret: 'fake-secret-123'/);
       assert.ok(existsSync(join(dir, 'servers', id, 'eula.txt')));
     }
+    // the agent plugins were put in place before the first start, configured for their server
+    assert.match(state.steps.find((s) => s.id === 'install:proxy')?.detail ?? '', /\+ agent 0\.1\.0/);
+    assert.equal(read(dir, 'servers', 'proxy', 'plugins', 'MCNetworkAgent.jar'), 'fake velocity jar 0.1.0');
+    assert.equal(read(dir, 'servers', 'lobby', 'plugins', 'MCNetworkAgent.jar'), 'fake paper jar 0.1.0');
+    assert.match(read(dir, 'servers', 'lobby', 'plugins', 'MCNetworkAgent', 'config.properties'), /^token=test-agent-token\nserver-id=lobby$/m);
+    assert.match(read(dir, 'servers', 'proxy', 'plugins', 'mcnetwork-agent', 'config.properties'), /^server-id=proxy$/m);
     await waitFor(() => n.views().every((v) => v.status?.state === 'running'), 5000, 'everything running');
   });
 

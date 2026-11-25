@@ -40,7 +40,15 @@ export function buildRoutes(net: Network): Route[] {
     { method: 'POST', path: `${id}/backup`, handler: forward(net, 'backup', () => ({}), 600_000) },
     { method: 'POST', path: `${id}/command`, handler: forward(net, 'command', (b) => ({ text: str(b, 'text') })) },
     { method: 'POST', path: `${id}/eula`, handler: forward(net, 'acceptEula') },
-    { method: 'POST', path: `${id}/install`, handler: forward(net, 'install', (b) => ({ provider: str(b, 'provider'), version: str(b, 'version'), backupFirst: b.backupFirst }), 600_000) },
+    {
+      method: 'POST',
+      path: `${id}/install`,
+      handler: async (ctx) => {
+        const ok = await forward(net, 'install', (b) => ({ provider: str(b, 'provider'), version: str(b, 'version'), backupFirst: b.backupFirst }), 600_000)(ctx);
+        if (ok === true) net.ensureAgent(ctx.params.id); // new software: the agent plugin goes with it
+        return ok;
+      },
+    },
     { method: 'POST', path: `${id}/update`, handler: forward(net, 'update', (b) => ({ latest: b.latest === true }), 600_000) },
     { method: 'GET', path: `${id}/versions`, handler: ({ params, query }) => guarded(() => net.instance(params.id).request('versions', { provider: query.get('provider') ?? 'paper', snapshots: query.get('snapshots') === 'true' }, 30_000)) },
     { method: 'GET', path: `${id}/logs`, handler: ({ params, query }) => guarded(() => net.instance(params.id).request('logs', { limit: Number(query.get('limit') ?? 200) })) },
@@ -59,6 +67,13 @@ export function buildRoutes(net: Network): Route[] {
           return { paper, velocity, ports: { proxy: 25565 }, ram: { totalMb: plan.totalMb, reserveMb: plan.reserveMb }, configured: net.config.servers.length > 0 };
         }),
     },
+
+    { method: 'GET', path: '/api/agent', handler: () => ({ enabled: net.config.agent.enabled, bundledVersion: net.bundledAgentVersion }) },
+    { method: 'POST', path: `${id}/agent/install`, handler: ({ params }) => guarded(() => net.installAgent(params.id)) },
+    { method: 'POST', path: `${id}/agent/command`, handler: ({ params, body }) => guarded(() => ({ id: net.agentCommand(params.id, str(body, 'type'), body) })) },
+    { method: 'POST', path: `${id}/gc`, handler: ({ params }) => guarded(() => ({ id: net.agentCommand(params.id, 'gc') })) },
+    { method: 'POST', path: `${id}/evacuate`, handler: ({ params, body }) => guarded(() => ({ id: net.agentCommand(params.id, 'evacuate', body) })) },
+    { method: 'GET', path: '/api/ram/recommendations', handler: () => net.recommendations() },
 
     { method: 'GET', path: '/api/ram', handler: () => ({ latest: net.tracker.latest ?? net.sampleRam(), peaks24h: net.tracker.peaks(24 * 60) }) },
     { method: 'GET', path: '/api/ram/history', handler: ({ query }) => net.tracker.history(Math.min(1440, Math.max(1, Number(query.get('minutes') ?? 60))), Math.min(2000, Number(query.get('points') ?? 500))) },

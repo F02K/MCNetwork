@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after } from 'node:test';
@@ -38,10 +39,28 @@ export const server = (id: string, extra: Partial<ServerConfig> = {}): ServerCon
 export const SYSTEM_8G: SystemMemory = { totalMb: 8192, availableMb: 6000, usedMb: 2192 };
 
 /** A network with the fake MCLI; the machine has 8 GB unless told otherwise. */
+/** A folder with two stand-in plugin jars and the manifest that the daemon verifies them with. */
+export function makeAgentJars(version = '0.1.0'): string {
+  const dir = tmp('agent-jars');
+  const jars: Record<string, { file: string; size: number; sha256: string }> = {};
+  for (const kind of ['paper', 'velocity']) {
+    const file = `mcnetwork-agent-${kind}.jar`;
+    const bytes = Buffer.from(`fake ${kind} jar ${version}`);
+    writeFileSync(join(dir, file), bytes);
+    jars[kind] = { file, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+  }
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ version, jars }));
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export const AGENT_TOKEN = 'test-agent-token';
+
 export function makeNetwork(servers: ServerConfig[], cfg: Partial<NetworkConfig> = {}, opts: NetworkOptions = {}): { net: Network; dir: string; config: NetworkConfig } {
   const dir = tmp();
-  const config: NetworkConfig = { ...defaultConfig(), mcliPath: FAKE_MCLI, http: { host: '127.0.0.1', port: 0, token: '' }, servers, ...cfg };
-  const net = new Network(dir, config, { systemMemory: () => SYSTEM_8G, instance: { respawnMs: 30, stopTimeoutMs: 3000 }, ...opts });
+  const config: NetworkConfig = { ...defaultConfig(), mcliPath: FAKE_MCLI, http: { host: '127.0.0.1', port: 0, token: '' }, agent: { enabled: true, token: AGENT_TOKEN }, servers, ...cfg };
+  const net = new Network(dir, config, { systemMemory: () => SYSTEM_8G, instance: { respawnMs: 30, stopTimeoutMs: 3000 }, agentJarsDir: makeAgentJars(), ...opts });
+  net.daemonUrl = 'http://127.0.0.1:18999';
   after(() => net.stop().then(() => undefined));
   return { net, dir, config };
 }

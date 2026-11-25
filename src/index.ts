@@ -16,10 +16,12 @@ async function main(): Promise<void> {
   if (argValue('--port')) config.http.port = Number(argValue('--port'));
   saveConfig(dataDir, config); // writes the defaults on the first run so they can be edited
 
-  const network = new Network(dataDir, config);
+  const agentJarsDir = argValue('--agent') ? resolve(argValue('--agent') as string) : undefined;
+  const network = new Network(dataDir, config, { agentJarsDir });
   const webDir = resolve(argValue('--web') ?? join(__dirname, '..', 'web'));
   const http = createHttpServer(network, config.http, webDir);
   const port = await http.listen();
+  network.daemonUrl = `http://127.0.0.1:${port}`; // the plugins run on this machine
   console.log(`MCNetwork API on http://${config.http.host}:${port} (data: ${dataDir}, config: ${CONFIG_FILE})`);
   await network.start();
   console.log(`Network started: ${config.servers.length} server(s).`);

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { MemorySettings, NetworkConfig, ServerConfig } from './types';
@@ -10,6 +11,7 @@ export function defaultConfig(): NetworkConfig {
     mcliPath: process.env.MCLI_PATH ?? 'mcli.js',
     http: { host: '127.0.0.1', port: 8080, token: '' },
     ram: { totalMb: 0, reserveMb: 0, sampleSeconds: 10 },
+    agent: { enabled: true, token: randomBytes(24).toString('hex') },
     servers: [],
   };
 }
@@ -74,6 +76,9 @@ export function loadConfig(dataDir: string): NetworkConfig {
   }
   const http = { ...base.http, ...(raw.http as object | undefined) };
   const ram = { ...base.ram, ...(raw.ram as object | undefined) };
+  const agent = { ...base.agent, ...(raw.agent as object | undefined) };
+  if (typeof agent.enabled !== 'boolean') throw new Error('agent.enabled must be true or false');
+  if (typeof agent.token !== 'string' || !agent.token) agent.token = base.agent.token; // a missing token is generated (and saved on start)
   num(http.port, 'http.port', 0);
   num(ram.totalMb, 'ram.totalMb');
   num(ram.reserveMb, 'ram.reserveMb');
@@ -85,7 +90,7 @@ export function loadConfig(dataDir: string): NetworkConfig {
     if (ids.has(s.id)) throw new Error(`Duplicate server id "${s.id}"`);
     ids.add(s.id);
   }
-  const cfg: NetworkConfig = { mcliPath: typeof raw.mcliPath === 'string' && raw.mcliPath ? raw.mcliPath : base.mcliPath, http, ram, servers };
+  const cfg: NetworkConfig = { mcliPath: typeof raw.mcliPath === 'string' && raw.mcliPath ? raw.mcliPath : base.mcliPath, http, ram, agent, servers };
   if (!isLoopback(cfg.http.host) && !cfg.http.token) throw new Error('http.token is required when http.host is not a loopback address');
   return cfg;
 }

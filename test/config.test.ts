@@ -49,7 +49,9 @@ describe('insideDataDir', () => {
 
 describe('loadConfig / saveConfig', () => {
   it('returns the defaults when there is no file', () => {
-    assert.deepEqual(loadConfig(tmp()), defaultConfig());
+    const cfg = loadConfig(tmp());
+    assert.deepEqual({ ...cfg, agent: { ...cfg.agent, token: '' } }, { ...defaultConfig(), agent: { enabled: true, token: '' } });
+    assert.match(cfg.agent.token, /^[0-9a-f]{48}$/, 'a token is generated');
   });
 
   it('round-trips a saved configuration', () => {
@@ -70,6 +72,18 @@ describe('loadConfig / saveConfig', () => {
     assert.equal(cfg.ram.reserveMb, 2048);
     assert.equal(cfg.ram.sampleSeconds, 10);
     assert.equal(cfg.servers.length, 1);
+  });
+
+  it('keeps the agent token and generates one when it is missing', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, CONFIG_FILE), JSON.stringify({ agent: { token: 'mine' } }));
+    assert.equal(loadConfig(dir).agent.token, 'mine');
+    writeFileSync(join(dir, CONFIG_FILE), JSON.stringify({ agent: { enabled: false, token: '' } }));
+    const cfg = loadConfig(dir);
+    assert.equal(cfg.agent.enabled, false);
+    assert.ok(cfg.agent.token.length > 20);
+    writeFileSync(join(dir, CONFIG_FILE), JSON.stringify({ agent: { enabled: 'yes' } }));
+    assert.throws(() => loadConfig(dir), /agent.enabled/);
   });
 
   it('rejects broken files', () => {

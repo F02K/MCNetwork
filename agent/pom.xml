@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>dev.mcnetwork</groupId>
+  <artifactId>mcnetwork-agent-parent</artifactId>
+  <version>0.1.0</version>
+  <packaging>pom</packaging>
+  <name>MCNetwork Agent</name>
+
+  <modules>
+    <module>core</module>
+    <module>paper</module>
+    <module>velocity</module>
+  </modules>
+
+  <properties>
+    <!-- Java 17 bytecode: runs on every Paper and Velocity that MCNetwork supports (Paper 1.19+ needs Java 17 or newer) -->
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- fixed timestamp: the same sources always give the same jar bytes -->
+    <project.build.outputTimestamp>2025-01-01T00:00:00Z</project.build.outputTimestamp>
+  </properties>
+
+  <repositories>
+    <repository>
+      <id>papermc</id>
+      <url>https://repo.papermc.io/repository/maven-public/</url>
+    </repository>
+  </repositories>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-shade-plugin</artifactId>
+          <version>3.6.0</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>

@@ -44,10 +44,18 @@ export interface RamConfig {
   sampleSeconds: number;
 }
 
+export interface AgentConfigSettings {
+  /** Install and use the Paper/Velocity plugins that report heap, TPS and players. */
+  enabled: boolean;
+  /** Secret the plugins send with every report; generated on the first run. */
+  token: string;
+}
+
 export interface NetworkConfig {
   /** Path to mcli.js (relative paths are resolved against the data directory). */
   mcliPath: string;
   http: HttpConfig;
   ram: RamConfig;
+  agent: AgentConfigSettings;
   servers: ServerConfig[];
 }

@@ -3,7 +3,7 @@ import { after, before, describe, it } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHttpServer } from '../src/http/server';
-import { makeNetwork, server, tmp, waitFor } from './helpers';
+import { AGENT_TOKEN, makeNetwork, server, tmp, waitFor } from './helpers';
 
 let base = '';
 // created at file level so that its cleanup hooks belong to the whole file, not to the before() hook
@@ -160,5 +160,44 @@ describe('HTTP API', () => {
     assert.deepEqual(ok.json, { totalMb: 0, reserveMb: 3000 });
     assert.equal((await call('PUT', '/api/ram/config', { reserveMb: 'lots' })).status, 400);
     await call('PUT', '/api/ram/config', { reserveMb: 0 });
+  });
+
+  it('accepts reports from agents with the agent token only, and answers with their orders', async () => {
+    const report = { serverId: 'lobby', kind: 'paper', agentVersion: '0.1.0', time: 1, jvm: { heapUsedMb: 1, heapCommittedMb: 2, heapMaxMb: 3, nonHeapUsedMb: 1, liveSetMb: 1, gcCount: 0, gcTimeMs: 0, threads: 1, uptimeMs: 1, processors: 1, processCpu: null }, game: { tps: [20, 20, 20], mspt: 1, players: 0, maxPlayers: 20, version: '1.21.8', worlds: [] }, results: [] };
+    const send = (token: string | null, body: unknown) => fetch(`${base}/api/agent/report`, { method: 'POST', headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal((await send(null, report)).status, 401);
+    assert.equal((await send(TOKEN, report)).status, 401, 'the dashboard token is not the agent token');
+    assert.equal((await send(AGENT_TOKEN, { ...report, serverId: 'ghost' })).status, 404);
+    const bad = await send(AGENT_TOKEN, { ...report, jvm: 5 });
+    assert.equal(bad.status, 400);
+    assert.match(((await bad.json()) as { error: string }).error, /jvm/);
+
+    const first = await send(AGENT_TOKEN, report);
+    assert.equal(first.status, 200);
+    assert.deepEqual(await first.json(), { ok: true, commands: [] });
+
+    // the dashboard asks for a gc; the agent gets it with its next report and reports the outcome after that
+    const order = (await call('POST', '/api/servers/lobby/gc')).json as { id: string };
+    const second = (await (await send(AGENT_TOKEN, report)).json()) as { commands: { id: string; type: string }[] };
+    assert.deepEqual(second.commands, [{ id: order.id, type: 'gc' }]);
+    await send(AGENT_TOKEN, { ...report, results: [{ id: order.id, ok: true, message: 'heap in use 400 MB -> 200 MB' }] });
+    const view = (await call('GET', '/api/servers/lobby')).json as { agent: { connected: boolean; commands: { id: string; done: boolean; message: string }[]; game: { tps: number[] } } };
+    assert.equal(view.agent.connected, true);
+    assert.equal(view.agent.game.tps[0], 20);
+    assert.equal(view.agent.commands[0].done, true);
+    assert.match(view.agent.commands[0].message, /200 MB/);
+  });
+
+  it('offers the agent routes: status, reinstall, orders and recommendations', async () => {
+    const info = (await call('GET', '/api/agent')).json as { enabled: boolean; bundledVersion: string };
+    assert.deepEqual(info, { enabled: true, bundledVersion: '0.1.0' });
+    const installed = (await call('POST', '/api/servers/lobby/agent/install')).json as { kind: string };
+    assert.equal(installed.kind, 'paper');
+    assert.equal((await call('POST', '/api/servers/lobby/agent/command', { type: 'gc' })).status, 200);
+    assert.equal((await call('POST', '/api/servers/lobby/agent/command', {})).status, 400);
+    assert.equal((await call('POST', '/api/servers/lobby/agent/command', { type: 'nope' })).status, 400);
+    assert.equal((await call('POST', '/api/servers/lobby/evacuate', { to: 'lobby' })).status, 400);
+    const recs = (await call('GET', '/api/ram/recommendations')).json as { id: string; state: string }[];
+    assert.deepEqual(recs.map((r) => r.id), ['proxy', 'lobby']);
   });
 });

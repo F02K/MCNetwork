@@ -1,0 +1,7 @@
+name: MCNetworkAgent
+version: '${project.version}'
+main: dev.mcnetwork.agent.paper.PaperAgent
+api-version: '1.19'
+authors: [MCNetwork]
+description: Reports JVM memory, TPS and players to the MCNetwork daemon.
+website: https://github.com/F02K/MCNetwork

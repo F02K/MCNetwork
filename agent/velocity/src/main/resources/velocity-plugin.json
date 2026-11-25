@@ -1,0 +1,9 @@
+{
+  "id": "mcnetwork-agent",
+  "name": "MCNetworkAgent",
+  "version": "${project.version}",
+  "description": "Reports JVM memory and players to the MCNetwork daemon and moves players on request.",
+  "authors": ["MCNetwork"],
+  "dependencies": [],
+  "main": "dev.mcnetwork.agent.velocity.VelocityAgent"
+}

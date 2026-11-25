@@ -10,7 +10,7 @@ const frame = (t: number, rssMb = 100, availableMb = 500): Omit<RamFrame, 'press
   t,
   system: { ...sys, availableMb },
   networkRssMb: rssMb,
-  servers: { a: { state: 'running', rssMb, maxMb: 1024, players: 0, heapUsedMb: null } },
+  servers: { a: { state: 'running', rssMb, maxMb: 1024, players: 0, heapUsedMb: null, liveSetMb: null, tps: null } },
 });
 
 describe('RamTracker', () => {

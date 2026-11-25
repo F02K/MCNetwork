@@ -2,9 +2,13 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveMcliPath, resolveServerDir, saveConfig, validateServer } from './config';
+import { installAgent, loadManifest, type InstallResult } from './agent/install';
+import { AgentStore, type PendingCommand } from './agent/store';
+import type { AgentGame, AgentJvm, AgentProxy } from './agent/protocol';
 import { McliInstance, type InstanceOptions } from './mcli/instance';
 import { parseMemoryMb, type McliStatus } from './mcli/protocol';
 import { planRam, type Plan } from './ram/planner';
+import { recommend, type Recommendation } from './ram/recommend';
 import { readSystemMemory, type Pressure, type SystemMemory } from './ram/system';
 import { RamTracker, type RamFrame } from './ram/tracker';
 import { proxyOf, writeProxyConfig } from './setup/layout';
@@ -19,6 +23,8 @@ export interface NetworkOptions {
   instance?: Partial<InstanceOptions>;
   systemMemory?: () => SystemMemory;
   setup?: SetupOptions;
+  /** Folder with the agent plugin jars and manifest.json (default: ../agent/jars next to the bundle). */
+  agentJarsDir?: string;
 }
 
 export interface ServerView {
@@ -27,6 +33,26 @@ export interface ServerView {
   error: string | null;
   needsRestart: boolean;
   status: McliStatus | null;
+  agent: AgentView;
+}
+
+/** What the Paper/Velocity plugin of one server reports, and its state. */
+export interface AgentView {
+  enabled: boolean;
+  connected: boolean;
+  lastSeen: number | null;
+  /** Version of the plugin that reports. */
+  version: string | null;
+  /** Version MCNetwork would install. */
+  bundledVersion: string | null;
+  /** The plugin that runs is older than the bundled one (the new jar loads at the next restart). */
+  outdated: boolean;
+  /** Why the plugin is not installed, if it could not be. */
+  error: string | null;
+  jvm: AgentJvm | null;
+  game: AgentGame | null;
+  proxy: AgentProxy | null;
+  commands: PendingCommand[];
 }
 
 export interface AppliedAllocation {
@@ -48,6 +74,10 @@ export class Network extends EventEmitter {
   private sampleTimer: NodeJS.Timeout | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
   readonly setup: SetupRunner;
+  readonly agents = new AgentStore();
+  /** Where the plugins reach this daemon; set once the HTTP server listens. */
+  daemonUrl = '';
+  private agentErrors = new Map<string, string>();
   private util: McliInstance | null = null;
   private pressure: Pressure = 'ok';
   private readonly readMemory: () => SystemMemory;
@@ -62,6 +92,9 @@ export class Network extends EventEmitter {
     this.tracker.load(join(dataDir, HISTORY_FILE));
     this.setup = new SetupRunner(this, opts.setup);
     this.setup.on('change', (state) => this.emit('setup', state));
+    this.agents.on('report', (r: { serverId: string }) => {
+      if (this.instances.has(r.serverId)) this.emit('agent', { id: r.serverId, agent: this.agentView(r.serverId) });
+    });
   }
 
   // ------------------------------------------------------------ lifecycle
@@ -71,6 +104,9 @@ export class Network extends EventEmitter {
     for (const s of this.config.servers) this.attach(s);
     await Promise.all([...this.instances.values()].map((i) => i.connect().catch(() => undefined)));
     await this.applyPlan().catch(() => undefined); // heap sizes must be in mcli.json before the first start
+    for (const s of this.config.servers) {
+      if (this.instances.get(s.id)?.status?.software && this.instances.get(s.id)?.status?.state === 'stopped') this.ensureAgent(s.id); // keeps the plugin up to date
+    }
     for (const s of this.startOrder()) {
       if (s.autoStart) await this.startServer(s.id).catch(() => undefined);
     }
@@ -133,11 +169,85 @@ export class Network extends EventEmitter {
   view(id: string): ServerView {
     const inst = this.instance(id);
     const config = this.config.servers.find((s) => s.id === id) as ServerConfig;
-    return { config, connection: inst.connection, error: inst.lastError, needsRestart: inst.needsRestart, status: inst.status };
+    return { config, connection: inst.connection, error: inst.lastError, needsRestart: inst.needsRestart, status: inst.status, agent: this.agentView(id) };
   }
 
   views(): ServerView[] {
     return this.config.servers.map((s) => this.view(s.id));
+  }
+
+  // ------------------------------------------------------------ agent plugins
+
+  get agentJarsDir(): string {
+    return this.opts.agentJarsDir ?? join(__dirname, '..', 'agent', 'jars');
+  }
+
+  /** Puts the plugin and its configuration into the server's folder (before its first start, or when it is stopped). */
+  installAgent(id: string): InstallResult {
+    this.instance(id);
+    const cfg = this.config.servers.find((s) => s.id === id) as ServerConfig;
+    if (!this.config.agent.enabled) throw new Error('The agent plugins are switched off (agent.enabled)');
+    if (!this.daemonUrl) throw new Error('The daemon does not know its own address yet');
+    const result = installAgent(resolveServerDir(this.dataDir, cfg), cfg.role, this.agentJarsDir, { url: this.daemonUrl, token: this.config.agent.token, serverId: id, intervalSeconds: Math.min(30, this.config.ram.sampleSeconds) });
+    this.agentErrors.delete(id);
+    return result;
+  }
+
+  /** Like installAgent, but a problem is remembered for the dashboard instead of thrown. */
+  ensureAgent(id: string): InstallResult | null {
+    try {
+      return this.installAgent(id);
+    } catch (err) {
+      this.agentErrors.set(id, (err as Error).message);
+      return null;
+    }
+  }
+
+  /** Version of the plugins MCNetwork would install, or null when they were not built. */
+  get bundledAgentVersion(): string | null {
+    return loadManifest(this.agentJarsDir)?.version ?? null;
+  }
+
+  agentView(id: string): AgentView {
+    const cfg = this.config.servers.find((s) => s.id === id);
+    const manifest = loadManifest(this.agentJarsDir);
+    const latest = this.agents.latest(id);
+    const connected = this.agents.connected(id);
+    const version = latest?.report.agentVersion ?? null;
+    const bundledVersion = manifest?.version ?? null;
+    return {
+      enabled: this.config.agent.enabled,
+      connected,
+      lastSeen: latest?.receivedAt ?? null,
+      version,
+      bundledVersion,
+      outdated: !!version && !!bundledVersion && version !== bundledVersion,
+      error: this.agentErrors.get(id) ?? (this.config.agent.enabled && !manifest && cfg ? 'The agent plugins are not built (npm run build:agent)' : null),
+      jvm: connected ? (latest?.report.jvm ?? null) : null,
+      game: connected ? (latest?.report.game ?? null) : null,
+      proxy: connected ? (latest?.report.proxy ?? null) : null,
+      commands: this.agents.commands(id),
+    };
+  }
+
+  /** Orders for a server's agent: "gc" frees memory, "evacuate" moves its players to another server (through the proxy's agent). */
+  agentCommand(id: string, type: string, args: Record<string, unknown> = {}): string {
+    const cfg = this.config.servers.find((s) => s.id === id);
+    if (!cfg) throw new Error(`Unknown server "${id}"`);
+    if (type === 'gc') {
+      if (!this.agents.connected(id)) throw new Error(`The agent of "${id}" is not connected`);
+      return this.agents.enqueue(id, 'gc');
+    }
+    if (type === 'evacuate') {
+      if (cfg.role !== 'backend') throw new Error('Only a game server can be evacuated');
+      const to = typeof args.to === 'string' ? args.to : this.config.servers.find((s) => s.entry && s.id !== id)?.id;
+      if (!to || !this.config.servers.some((s) => s.id === to && s.role === 'backend')) throw new Error('Choose another game server to move the players to');
+      if (to === id) throw new Error('The target must be a different server');
+      const proxy = proxyOf(this.config);
+      if (!proxy || !this.agents.connected(proxy.id)) throw new Error('The proxy agent is not connected, so players cannot be moved');
+      return this.agents.enqueue(proxy.id, 'evacuate', { from: id, to, message: typeof args.message === 'string' ? args.message.slice(0, 200) : 'This server is restarting. You are being moved.' });
+    }
+    throw new Error(`Unknown command "${type}"`);
   }
 
   async startServer(id: string): Promise<unknown> {
@@ -184,6 +294,8 @@ export class Network extends EventEmitter {
     if (inst.status && inst.status.state !== 'stopped') throw new Error('Stop the server before removing it');
     await inst.disconnect();
     this.instances.delete(id);
+    this.agents.forget(id);
+    this.agentErrors.delete(id);
     this.config.servers.splice(this.config.servers.findIndex((s) => s.id === id), 1);
     saveConfig(this.dataDir, this.config);
     await this.syncProxy();
@@ -249,6 +361,11 @@ export class Network extends EventEmitter {
     return { totalMb: this.config.ram.totalMb, reserveMb: this.config.ram.reserveMb };
   }
 
+  /** Per server: is the heap too big, too small or right, judged by what the plugins measured over the last 24 hours. */
+  recommendations(): Recommendation[] {
+    return recommend(this.tracker.history(24 * 60, 100_000), this.config.servers.map((s) => s.id));
+  }
+
   /** The plan for servers that do not exist yet (the wizard shows it before anything is created). */
   previewPlan(input: Record<string, unknown>): Plan {
     if (!Array.isArray(input.servers)) throw new Error('"servers" must be a list');
@@ -292,7 +409,16 @@ export class Network extends EventEmitter {
       const st = this.instances.get(s.id)?.status;
       const rssMb = st && st.state !== 'stopped' ? Math.round(st.memory.procRss / MB) : 0;
       networkRssMb += rssMb;
-      servers[s.id] = { state: st?.state ?? 'stopped', rssMb, maxMb: st ? parseMemoryMb(st.memory.max) : 0, players: st?.players.count ?? 0, heapUsedMb: null };
+      const a = this.agents.connected(s.id, now) ? this.agents.latest(s.id)?.report : undefined;
+      servers[s.id] = {
+        state: st?.state ?? 'stopped',
+        rssMb,
+        maxMb: st ? parseMemoryMb(st.memory.max) : 0,
+        players: st?.players.count ?? 0,
+        heapUsedMb: a ? Math.round(a.jvm.heapUsedMb) : null,
+        liveSetMb: a?.jvm.liveSetMb !== undefined && a.jvm.liveSetMb !== null ? Math.round(a.jvm.liveSetMb) : null,
+        tps: a?.game ? Math.round(a.game.tps[0] * 10) / 10 : null,
+      };
     }
     const frame = this.tracker.record({ t: now, system, networkRssMb, servers });
     this.emit('ram', frame);

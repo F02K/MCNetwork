@@ -20,8 +20,12 @@ export interface ServerRam {
   /** Configured -Xmx for the next/current start. */
   maxMb: number;
   players: number;
-  /** Heap in use and committed; only known when the server plugin reports it (null otherwise). */
+  /** Heap in use, as reported by the server plugin (null without it). */
   heapUsedMb: number | null;
+  /** Heap still in use after the last garbage collection: what the server really needs. */
+  liveSetMb: number | null;
+  /** Ticks per second (1 minute average); game servers only. */
+  tps: number | null;
 }
 
 export const DEFAULT_CAPACITY = 8640; // 24 h at 10 s

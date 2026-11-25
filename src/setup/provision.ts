@@ -206,7 +206,8 @@ export class SetupRunner extends EventEmitter {
         const ok = await net.instance(s.id).request<boolean>('install', { provider, version, backupFirst: false }, 600_000);
         if (!ok) throw new Error(`The download of ${provider} ${version} failed - see the log of "${s.id}"`);
         if (s.role === 'backend') await net.instance(s.id).request('acceptEula'); // the user accepted the EULA in the request
-        return `${provider} ${version}`;
+        const agent = net.ensureAgent(s.id); // the plugin must be in place before the first start
+        return `${provider} ${version}${agent ? ` + agent ${agent.version}` : ' (agent plugin not installed: see the server in the dashboard)'}`;
       });
     }
 

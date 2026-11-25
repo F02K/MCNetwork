@@ -5,6 +5,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Network } from '../network';
 import type { HttpConfig } from '../types';
+import { handleAgentReport } from './agent';
 import { buildRoutes } from './routes';
 import { compile, HttpError, match, readBody, type Context } from './router';
 
@@ -35,6 +36,7 @@ function stream(net: Network, req: IncomingMessage, res: ServerResponse): void {
     ['pressure', (p: unknown) => write('pressure', { level: p })],
     ['servers', () => write('servers', net.views().map((v) => v.config))],
     ['setup', (s: unknown) => write('setup', s)],
+    ['agent', (a: unknown) => write('agent', a)],
   ];
   for (const [name, fn] of handlers) net.on(name, fn);
   write('hello', { servers: net.views().length });
@@ -78,6 +80,7 @@ export function createHttpServer(net: Network, cfg: HttpConfig, webDir?: string)
       const url = new URL(req.url ?? '/', 'http://localhost');
       try {
         if (webDir && req.method === 'GET' && !url.pathname.startsWith('/api/') && serveStatic(webDir, url.pathname, res)) return;
+        if (req.method === 'POST' && url.pathname === '/api/agent/report') return send(res, 200, await handleAgentReport(net, req));
         if (!authorized(cfg.token, req, url.searchParams)) throw new HttpError(401, 'Missing or wrong token');
         if (req.method === 'GET' && url.pathname === '/api/events') return stream(net, req, res);
         const found = match(table, req.method ?? 'GET', url.pathname);
