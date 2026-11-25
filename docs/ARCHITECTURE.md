@@ -24,6 +24,7 @@ dashboard / TUI / curl
 | Agent protocol, order queue, plugin installation | `src/agent/` |
 | Importing (copy/move/link, backups, Spigot to Paper), proxy list merging | `src/setup/importer.ts`, `src/setup/velocity.ts` |
 | Ports: overview, change, firewall, UPnP, outside check | `src/ports/` |
+| Autopilot: engine, leak detection | `src/autopilot/` |
 | Dashboard (vanilla ES modules, no build step) | `web/` |
 
 ## Decisions
@@ -44,9 +45,13 @@ dashboard / TUI / curl
 - **Software that cannot sit behind the proxy stays outside it.** `standalone` servers get RAM planning, start/stop/backup and a console, but no entry in `velocity.toml` and no forwarding.
 - **Opening the internet is guided, not done behind your back.** The firewall is only inspected (the command is shown); the router mapping is made with UPnP when you ask, kept while the daemon runs and released when it stops; the outside check only happens on a click.
 
+- **The autopilot is cautious by design.** Off and in dry run by default; it needs two independent counts of zero players before it stops anything; it never stops the join-first server because the proxy sends everybody there; it acts one server at a time and at most 12 times an hour.
+- **Waking a server is done at the proxy.** Velocity cannot hold a login for a server that is down, so the plugin refuses the switch, remembers the player, reports the wish with its next report (every 3 s for the proxy) and connects the player when the daemon says the server answers.
+- **A leak is a trend, not a level.** A big heap in use is normal for Java; what gives a leak away is the heap *after* garbage collection growing in a straight line for hours.
+
 ## Planned
 
 1. More setup choices: other backend software (Fabric/Forge need a forwarding mod), more than one proxy.
-2. Autopilot on top of the plugins: memory-pressure actions (GC on idle servers, restart on a leak trend with players moved first), on-demand start of idle servers.
-3. A guided "restart server" that moves the players first (the pieces exist: `evacuate`).
+2. A guided "restart server" that moves the players first (the pieces exist: `evacuate`).
+3. More autopilot rules (scheduled quiet-hour restarts, per-server limits).
 4. Terminal UI on top of the same API.

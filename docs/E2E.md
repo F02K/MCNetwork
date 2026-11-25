@@ -18,6 +18,7 @@ The automated tests use a stand-in for MCLI. Before a release the whole thing is
    - `forwarding.secret` of the proxy equals the secret in the copy's `config/paper-global.yml`,
    - the bot lands near (100, 80, 100) when it runs `/server survival` (the world came along).
 4b. **Ports:** `GET /api/ports` shows every port; changing a running server's port is refused, a stopped one works (`server.properties`, `velocity.toml`, live `velocity reload`) and the bot reaches it on the new port; `GET /api/ports/access` shows the firewall command; UPnP needs a real router and is covered by tests against a fake one.
+4c. **Autopilot:** enable it (`dryRun: false`, `stopIdle`, `idleMinutes: 1`, `wakeOnDemand`, `intervalSeconds: 5`). After about two minutes the empty non-entry server is stopped (`GET /api/autopilot`). Join with the bot and type `/server <that server>`: it says "starting up", and about 30 seconds later "ready. Connecting you now." and the proxy log shows the bot on that server. Pressure and leak rules are covered by tests with a controlled clock; they need a machine that is really short of memory, or hours of data.
 5. The agent plugins (installed by the setup, nothing to do by hand): check that
    - `GET /api/servers` shows `agent.connected: true` with heap, `liveSetMb`, TPS and worlds for the game servers and the players per server for the proxy,
    - `POST /api/servers/<id>/gc` returns an order whose result (`heap in use X MB -> Y MB`) appears in `agent.commands`,

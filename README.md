@@ -3,7 +3,7 @@
 Management tool for Minecraft server networks: one proxy (Velocity) and several backend servers on one machine,
 each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking and planning for the whole network.
 
-**Status:** daemon, HTTP API, web dashboard, setup wizard, the Paper/Velocity plugins, import of existing servers and port management work. A terminal UI is next.
+**Status:** daemon, HTTP API, web dashboard, setup wizard, the Paper/Velocity plugins, import of existing servers and port management work. The autopilot and Windows Server support are in. A terminal UI is next.
 
 ![Dashboard](docs/img/overview.png)
 
@@ -12,6 +12,7 @@ each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking 
 - **Web dashboard** (`http://localhost:8080`, English and German, light and dark): network overview, live console per server, player list, settings, backups, RAM chart with hover details and a table view.
 - **Plugins that deliver themselves:** MCNetwork ships a Paper and a Velocity plugin ([agent/](agent/README.md)) and installs and configures them in every server, with no manual steps. They report real heap use, TPS, GC and players, and carry out orders: free memory now, or move all players of a server to another one (for example before a restart).
 - **Bring your existing servers:** point MCNetwork at a server folder; it recognises Paper, Spigot, Fabric, Forge, Vanilla and Velocity, shows what it found (version, worlds, plugins, size, warnings) and brings it in - as a copy, moved, or used in place. Paper joins as it is; Spigot can be switched to Paper (world backed up first); software that cannot sit behind the proxy is managed on its own. Changed files are saved first.
+- **Autopilot** (off by default, with a dry-run mode that only writes down what it would do): frees memory when the machine gets tight, stops servers nobody is on and **starts them again when a player wants to join** (the proxy holds the player and connects them when the server is ready), and restarts a server whose memory need keeps growing for hours (players moved away first when it is critical). It never touches a server with players, the join-first server or the proxy.
 - **Ports without the headache:** one page lists every port, who can reach it and what is wrong (double ports, a game server that players could reach around the proxy), changes a port in all the right files, and guides the proxy to the internet: firewall command for your system, router port forwarding with UPnP (kept open while MCNetwork runs), the address to hand out, and an optional check from the internet.
 - **Setup wizard:** choose Velocity, add game servers (lobby, survival, …), see the RAM plan, confirm the Minecraft EULA, and MCNetwork builds the network:
   installs Velocity and Paper, lets each server write its settings once, then connects them (secure "modern" player forwarding with a shared secret,
@@ -34,6 +35,8 @@ each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking 
 ![Ports](docs/img/ports.png)
 
 ![Import](docs/img/import.png)
+
+![Autopilot](docs/img/autopilot.png)
 
 ## Quick start
 
@@ -86,6 +89,19 @@ Every server lives in `data/servers/<id>/`. Removing a server from the network n
 | `port` / `entry` | set by the wizard: the server's Minecraft port, and whether players join it first |
 
 The game servers listen on `127.0.0.1` only (ports from 30066 up), so players can only reach them through the proxy.
+
+## Autopilot
+
+Open **Autopilot** in the dashboard. Switch it on **in dry-run mode first**: it only writes into the log what it would do. When the log looks right, switch the dry run off.
+
+| Rule | What it does | Safety |
+| --- | --- | --- |
+| Free memory | when the machine's available memory drops below 15 % (7 % is critical), every server with a plugin runs a garbage collection; at most every 5 minutes per server | harmless |
+| Stop idle servers | a game server that has been empty for *N* minutes (default 15; a fifth of that when memory is tight) is stopped, one at a time | never the join-first server, never a standalone server, never one with a player (the daemon's and the plugin's count both have to be 0), not within 2 minutes of its start |
+| Start on demand | a player who tries `/server <sleeping server>` gets "starting up...", the daemon starts the server and the proxy connects the player when it answers | needs the proxy plugin 0.2.0+; without it nothing is stopped |
+| Restart on leak | the memory a server really needs (heap after garbage collection) is measured over 3 hours; steady growth of 20 MB/hour or more that reaches 70 % of the heap marks a leak. The server restarts when nobody is on it (6 hours between restarts); if the heap is 90 % full, players are moved to another server first | opt-in |
+
+At most 12 automatic actions per hour; after that it holds back and says so. A sleeping server comes back when a player asks, or with *Start now* on the page. If the daemon restarts, servers that were asleep start again.
 
 ## Importing existing servers
 

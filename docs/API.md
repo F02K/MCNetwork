@@ -47,6 +47,17 @@ To import, send the folder in the setup request: `backends[i].import = {path, mo
 | POST | `/api/ports/upnp/open` / `close` | | forwards / releases the proxy port on the router |
 | POST | `/api/ports/check` | `confirm: true` | asks mcsrvstat.us to reach the proxy from outside: `{ip, port, online, version, motd, hints[]}` (needs `confirm`, because it sends the public address and port to that service) |
 
+## Autopilot
+
+| Method | Path | Body | Result |
+| --- | --- | --- | --- |
+| GET | `/api/autopilot` | | `{config, events[] (newest first), sleeping: [{name, since}], waking[], wakeSupported}` |
+| PUT | `/api/autopilot` | any of `enabled`, `dryRun`, `intervalSeconds`, `gcOnPressure`, `stopIdle`, `idleMinutes`, `wakeOnDemand`, `restartOnLeak` | the new settings |
+| POST | `/api/autopilot/wake` | `server` | `{started}` for a server the autopilot put to sleep |
+| POST | `/api/shutdown` | | `{stopping: true}`; the daemon stops all servers gracefully and exits (for service managers) |
+
+An event: `{t, action, server, reason, dryRun, ok, error?}` with `action` one of `free-memory`, `stop-idle`, `wake`, `ready`, `restart-leak`, `evacuate`, `blocked`. For a dry run `ok` is `null`.
+
 ## Control (forwarded to the server's MCLI)
 
 | Method | Path | Body |
@@ -68,7 +79,7 @@ To import, send the folder in the setup request: `backends[i].import = {path, mo
 | POST | `/api/servers/:id/gc` | | queues "free memory"; `{id}` of the order |
 | POST | `/api/servers/:id/evacuate` | `to` (default: the join-first server), `message` | asks the proxy plugin to move the players of this server; `{id}` |
 | POST | `/api/servers/:id/agent/command` | `type` (`gc`/`evacuate`), arguments | same, generic |
-| POST | `/api/agent/report` | the plugins' report | used by the plugins only, authenticated with `agent.token`; answers `{ok, commands[]}` |
+| POST | `/api/agent/report` | the plugins' report | used by the plugins only, authenticated with `agent.token`; answers `{ok, commands[], sleeping[], awake[]}` (the last two are for the proxy plugin: servers it holds players for, and servers that are ready now). The proxy plugin adds `proxy.wakeRequests[]` to its report. |
 
 A server's `agent` field: `{connected, lastSeen, version, bundledVersion, outdated, error, jvm, game, proxy, commands[]}`. Orders show up in `commands` (newest first) with `done`, `ok` and `message` once the plugin reported the outcome (one or two report intervals later).
 
@@ -90,4 +101,4 @@ A frame: `{t, system:{totalMb, availableMb, usedMb}, pressure, networkRssMb, ser
 ## Event stream
 
 `GET /api/events` (server-sent events): `hello`, `server` (`{id, event, data}` for every MCLI event, e.g. log lines and state changes),
-`status` (`{id, status}`), `ram` (a frame), `pressure` (`{level}`), `servers` (the list changed), `setup` (the job state), `agent` (`{id, agent}` after every plugin report).
+`status` (`{id, status}`), `ram` (a frame), `pressure` (`{level}`), `servers` (the list changed), `setup` (the job state), `agent` (`{id, agent}` after every plugin report), `autopilot` (every event).
