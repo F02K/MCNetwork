@@ -28,6 +28,25 @@ Errors: `{"error": "..."}` with status 400 (invalid input or rejected by MCLI), 
 
 `acceptEula` must be `true`. Steps: create servers, plan RAM, install each server, first start of each server (to let it write its settings), connect (forwarding secret, `velocity.toml`), start.
 
+## Importing existing servers
+
+| Method | Path | Body | Result |
+| --- | --- | --- | --- |
+| POST | `/api/import/inspect` | `path` (absolute) | what the folder holds: `software`, `javaMajor`, `eula`, `properties`, `worlds`, `plugins`, `sizeBytes`, `warnings`, plus `support` (`full`, `convert`, `standalone`, `proxy`, `none`), `issues` (why it cannot be imported now) and `suggestedId`. Changes nothing. |
+
+To import, send the folder in the setup request: `backends[i].import = {path, mode: "copy"|"move"|"link", convertToPaper?, standalone?, version?}` (and `proxy.import = {path, mode}` for an existing Velocity). The setup then shows `import:<id>` steps; steps that are not needed are `skipped`.
+
+## Ports and internet access
+
+| Method | Path | Body | Result |
+| --- | --- | --- | --- |
+| GET | `/api/ports` | | `{publicPort, rows: [{id, port, host, exposure, listening, state, issues, canMakeLocal}]}` |
+| POST | `/api/servers/:id/port` | `port` and/or `localOnly: true` | moves a stopped server to another port (files, config, proxy list) or limits a game server to this machine |
+| GET | `/api/ports/access` | | `{proxyPort, proxyRunning, lan[], firewall: {tool, active, commands[], note}, upnp: {enabled, mapping, error}, address, carrierNat}` |
+| POST | `/api/ports/upnp/discover` | | `{found, router, host, externalIp, carrierNat}` |
+| POST | `/api/ports/upnp/open` / `close` | | forwards / releases the proxy port on the router |
+| POST | `/api/ports/check` | `confirm: true` | asks mcsrvstat.us to reach the proxy from outside: `{ip, port, online, version, motd, hints[]}` (needs `confirm`, because it sends the public address and port to that service) |
+
 ## Control (forwarded to the server's MCLI)
 
 | Method | Path | Body |

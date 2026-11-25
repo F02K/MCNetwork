@@ -249,7 +249,12 @@ export function mount(root) {
   const loadDefaults = async () => {
     try {
       defaults = await get('/api/setup/defaults');
-      if (!wiz.servers.length) wiz.servers = [{ id: 'lobby', name: 'Lobby', version: '', size: 'small', entry: !hasProxy || ![...store.servers.values()].some((v) => v.config.entry) }, ...(hasProxy ? [] : [{ id: 'survival', name: 'Survival', version: '', size: 'large', entry: false }])];
+      if (!wiz.servers.length) {
+        // suggest servers whose ids are not taken yet (a network that already has a lobby gets something else)
+        const free = TEMPLATES.filter((tpl) => !store.servers.has(tpl.id)).slice(0, hasProxy ? 1 : 2);
+        const entryExists = [...store.servers.values()].some((v) => v.config.entry);
+        wiz.servers = free.map((tpl, i) => ({ id: tpl.id, name: tpl.name, version: '', size: tpl.size, entry: i === 0 && !entryExists }));
+      }
       loading = false;
       render();
     } catch (err) {

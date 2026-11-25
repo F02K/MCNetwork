@@ -12,6 +12,12 @@ The automated tests use a stand-in for MCLI. Before a release the whole thing is
    - the player lands on the first server, then on the other one,
    - the player's UUID is the same on both servers,
    - MCNetwork shows the player on the proxy and on the current game server.
+4a. **Import:** create a standalone Paper server (any folder; run it once, `setworldspawn 100 80 100`, stop it) and run `POST /api/setup` with `backends: [{id: "survival", import: {path, mode: "copy"}}]`. Check that
+   - the original folder is unchanged (port, `online-mode`),
+   - the copy has the new local port, `online-mode=false`, its own MOTD, a `.mcnetwork-backup` with the originals and the agent plugin,
+   - `forwarding.secret` of the proxy equals the secret in the copy's `config/paper-global.yml`,
+   - the bot lands near (100, 80, 100) when it runs `/server survival` (the world came along).
+4b. **Ports:** `GET /api/ports` shows every port; changing a running server's port is refused, a stopped one works (`server.properties`, `velocity.toml`, live `velocity reload`) and the bot reaches it on the new port; `GET /api/ports/access` shows the firewall command; UPnP needs a real router and is covered by tests against a fake one.
 5. The agent plugins (installed by the setup, nothing to do by hand): check that
    - `GET /api/servers` shows `agent.connected: true` with heap, `liveSetMb`, TPS and worlds for the game servers and the players per server for the proxy,
    - `POST /api/servers/<id>/gc` returns an order whose result (`heap in use X MB -> Y MB`) appears in `agent.commands`,

@@ -3,7 +3,7 @@
 Management tool for Minecraft server networks: one proxy (Velocity) and several backend servers on one machine,
 each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking and planning for the whole network.
 
-**Status:** daemon, HTTP API, web dashboard, setup wizard and the Paper/Velocity plugins work. A terminal UI is next.
+**Status:** daemon, HTTP API, web dashboard, setup wizard, the Paper/Velocity plugins, import of existing servers and port management work. A terminal UI is next.
 
 ![Dashboard](docs/img/overview.png)
 
@@ -11,6 +11,8 @@ each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking 
 
 - **Web dashboard** (`http://localhost:8080`, English and German, light and dark): network overview, live console per server, player list, settings, backups, RAM chart with hover details and a table view.
 - **Plugins that deliver themselves:** MCNetwork ships a Paper and a Velocity plugin ([agent/](agent/README.md)) and installs and configures them in every server, with no manual steps. They report real heap use, TPS, GC and players, and carry out orders: free memory now, or move all players of a server to another one (for example before a restart).
+- **Bring your existing servers:** point MCNetwork at a server folder; it recognises Paper, Spigot, Fabric, Forge, Vanilla and Velocity, shows what it found (version, worlds, plugins, size, warnings) and brings it in - as a copy, moved, or used in place. Paper joins as it is; Spigot can be switched to Paper (world backed up first); software that cannot sit behind the proxy is managed on its own. Changed files are saved first.
+- **Ports without the headache:** one page lists every port, who can reach it and what is wrong (double ports, a game server that players could reach around the proxy), changes a port in all the right files, and guides the proxy to the internet: firewall command for your system, router port forwarding with UPnP (kept open while MCNetwork runs), the address to hand out, and an optional check from the internet.
 - **Setup wizard:** choose Velocity, add game servers (lobby, survival, …), see the RAM plan, confirm the Minecraft EULA, and MCNetwork builds the network:
   installs Velocity and Paper, lets each server write its settings once, then connects them (secure "modern" player forwarding with a shared secret,
   local-only backend ports, server list and join-first server in `velocity.toml`). Servers can be added to a running network later; the proxy is told to reload.
@@ -28,6 +30,10 @@ each controlled through [MCLI](https://github.com/F02K/MCLI), with RAM tracking 
 ![RAM](docs/img/ram.png)
 
 ![Performance](docs/img/performance.png)
+
+![Ports](docs/img/ports.png)
+
+![Import](docs/img/import.png)
 
 ## Quick start
 
@@ -75,10 +81,37 @@ Every server lives in `data/servers/<id>/`. Removing a server from the network n
 | `memory.weight` | share of the RAM budget (default: proxy 1, backend 4) |
 | `memory.minMb` / `maxMb` | limits for the heap (defaults: proxy 512-1024, backend from 512) |
 | `memory.pinnedMb` | fixed heap, ignores the weight |
+| `ports.upnp` | keep the proxy's port forwarded on the router with UPnP while MCNetwork runs |
 | `agent.enabled` / `agent.token` | the plugins on or off; the secret they report with (generated on the first run) |
 | `port` / `entry` | set by the wizard: the server's Minecraft port, and whether players join it first |
 
 The game servers listen on `127.0.0.1` only (ports from 30066 up), so players can only reach them through the proxy.
+
+## Importing existing servers
+
+In the wizard (or when adding a game server) choose **Import an existing server...** and enter the folder. Nothing is changed until the setup runs.
+
+| Found | What MCNetwork does |
+| --- | --- |
+| Paper (and forks such as Purpur) | joins the network as it is: local port, forwarding secret, plugin, entry in `velocity.toml` |
+| Spigot / CraftBukkit | switched to Paper of the same version when you ask for it (the world is backed up first), otherwise managed on its own |
+| Fabric, Forge, NeoForge, Vanilla | managed on its own (start, stop, backup, RAM, console): they cannot receive players from Velocity without extra mods |
+| Velocity | your proxy is used: its port, message and servers stay, the network is added to it |
+
+**How the files come in:** *copy* (default: your original stays exactly as it is), *move*, or *use in place*. Before MCNetwork changes `server.properties`, `config/paper-global.yml` or `velocity.toml` of an imported server, the originals are saved in `.mcnetwork-backup/<time>/` in that server's folder. Removing a server from the network never deletes its files.
+
+**Good to know:** behind Velocity players are authenticated by the proxy, so a game server runs with `online-mode=false` and listens on `127.0.0.1` only. A server that used to run in offline mode (cracked) gets real Mojang UUIDs now, so existing player data may not match; the check warns about it.
+
+## Ports and internet access
+
+Open **Ports** in the dashboard.
+
+- **Ports in your network:** every server's port, where it listens and whether it is up. It warns about the same port used twice, another program on a server's port, a proxy that only listens locally, and a game server that listens on every address (players could skip the proxy and its login check) with a one-click fix. *Change port* writes the new port into the server's own files and the proxy's list; the server must be stopped.
+- **Let players in from the internet** (only the proxy port has to be open):
+  1. the proxy runs;
+  2. the **firewall**: MCNetwork finds `ufw`, `firewalld`, `iptables` or the Windows firewall and shows the exact command (it does not change your firewall itself);
+  3. the **router**: *Find my router* uses UPnP; *Open port automatically* forwards the port and keeps it forwarded while MCNetwork runs (and gives it back when it stops, but opens it again at the next start). Without UPnP the page shows the manual steps with this machine's address. It also notices a provider-shared address (CGNAT), where forwarding cannot work;
+  4. a **check from the internet** with a public status service (mcsrvstat.us). That sends your public address and the port to that service, so it only happens when you click.
 
 ## The agent plugins
 

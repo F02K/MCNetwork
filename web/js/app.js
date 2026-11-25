@@ -6,6 +6,7 @@ import { clear, fill, h, svg } from './util.js';
 const ROUTES = [
   { re: /^#\/server\/([^/]+)$/, load: () => import('./views/server.js'), params: (m) => ({ id: decodeURIComponent(m[1]) }), nav: '#/' },
   { re: /^#\/ram$/, load: () => import('./views/ram.js'), nav: '#/ram' },
+  { re: /^#\/ports$/, load: () => import('./views/ports.js'), nav: '#/ports' },
   { re: /^#\/setup$/, load: () => import('./views/wizard.js'), nav: '#/setup' },
   { re: /^#?\/?$/, load: () => import('./views/overview.js'), nav: '#/' },
 ];
@@ -47,7 +48,7 @@ const logo = () => svg('svg', { viewBox: '0 0 32 32', 'aria-hidden': 'true' },
 );
 
 function shell() {
-  navEl = h('nav', { class: 'nav', 'aria-label': t('Main') }, [['#/', t('Network')], ['#/ram', t('RAM')], ['#/setup', t('Setup')]].map(([href, label]) => h('a', { href }, label)));
+  navEl = h('nav', { class: 'nav', 'aria-label': t('Main') }, [['#/', t('Network')], ['#/ram', t('RAM')], ['#/ports', t('Ports')], ['#/setup', t('Setup')]].map(([href, label]) => h('a', { href }, label)));
   live = h('span', { class: 'badge', title: t('Live connection to the daemon') });
   const lang = h('select', { 'aria-label': t('Language'), style: 'width:auto;min-height:32px;padding:.2rem .5rem', onChange: (e) => setLang(e.target.value) },
     [['en', 'English'], ['de', 'Deutsch']].map(([v, l]) => h('option', { value: v, selected: getLang() === v }, l)));

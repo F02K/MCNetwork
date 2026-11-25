@@ -22,6 +22,8 @@ dashboard / TUI / curl
 | Setup job, config writers (velocity.toml, server.properties, paper-global.yml) | `src/setup/` |
 | Agent plugins (Java: Paper and Velocity) and their jars | `agent/` |
 | Agent protocol, order queue, plugin installation | `src/agent/` |
+| Importing (copy/move/link, backups, Spigot to Paper), proxy list merging | `src/setup/importer.ts`, `src/setup/velocity.ts` |
+| Ports: overview, change, firewall, UPnP, outside check | `src/ports/` |
 | Dashboard (vanilla ES modules, no build step) | `web/` |
 
 ## Decisions
@@ -37,6 +39,10 @@ dashboard / TUI / curl
 
 - **Plugins deliver themselves.** The daemon owns the plugin jars and config; nothing is installed by hand. The plugin pushes reports to the daemon (it knows the daemon's address, not the other way round) and orders travel back in the answer, so the daemon never needs to reach into a game server.
 - **Recommendations use the live set.** Heap in use right after garbage collection is what a server needs; heap in use at any moment includes garbage that simply has not been collected yet.
+
+- **An imported server is changed as little as possible.** Only port, bind address, `online-mode` and the proxy's forwarding secret change (and the plugin is added); the originals of those files are saved first, and the default way in is a copy.
+- **Software that cannot sit behind the proxy stays outside it.** `standalone` servers get RAM planning, start/stop/backup and a console, but no entry in `velocity.toml` and no forwarding.
+- **Opening the internet is guided, not done behind your back.** The firewall is only inspected (the command is shown); the router mapping is made with UPnP when you ask, kept while the daemon runs and released when it stops; the outside check only happens on a click.
 
 ## Planned
 
