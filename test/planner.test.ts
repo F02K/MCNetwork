@@ -13,13 +13,17 @@ const get = (plan: Plan, id: string) => {
 };
 
 describe('rssForHeap / heapForRss', () => {
-  it('adds a fixed overhead for small heaps and a percentage for big ones', () => {
-    assert.equal(rssForHeap(512), 768);
-    assert.equal(rssForHeap(4000), 4600);
+  it('adds a fixed overhead for small heaps and a percentage for big ones, more for game servers than for a proxy', () => {
+    assert.equal(rssForHeap(512), 1024); // game server: 512 MB fixed
+    assert.equal(rssForHeap(512, 'proxy'), 768); // proxy: 256 MB fixed
+    assert.equal(rssForHeap(4000), 4600); // 15 % beats the fixed part
+    assert.equal(rssForHeap(4000, 'proxy'), 4600);
   });
 
   it('are inverse to each other', () => {
-    for (const heap of [256, 512, 1700, 1707, 2048, 8000]) assert.ok(Math.abs(heapForRss(rssForHeap(heap)) - heap) < 0.5, `heap ${heap}`);
+    for (const role of ['proxy', 'backend'] as const) {
+      for (const heap of [256, 512, 1700, 3400, 3500, 8000]) assert.ok(Math.abs(heapForRss(rssForHeap(heap, role), role) - heap) < 0.5, `${role} heap ${heap}`);
+    }
   });
 });
 
@@ -86,7 +90,7 @@ describe('planRam', () => {
     const plan = planRam({ totalMb: 2048, reserveMb: 0, servers: [proxy, lobby, survival] });
     assert.equal(plan.warnings.length, 1);
     assert.match(plan.warnings[0], /Not enough RAM/);
-    assert.equal(get(plan, 'proxy').xmxMb, 256);
+    assert.equal(get(plan, 'proxy').xmxMb, 512);
     assert.equal(get(plan, 'survival').xmxMb, 512);
   });
 

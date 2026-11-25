@@ -31,7 +31,7 @@ dashboard / TUI / curl
 
 - **Servers write their own default settings.** The setup starts each server once, waits for its settings file, stops it, and patches the real file (not a template), so new Velocity/Paper config versions keep working.
 - **Backends are local only.** Game servers bind to `127.0.0.1` with `online-mode=false`; the proxy authenticates players and forwards them with a shared secret.
-- **The planner is conservative.** It counts heap plus JVM overhead as if the heap were full; a real Velocity with a 1 GB heap used about 200 MB. Real heap data from the plugins will let it plan tighter.
+- **The planner is conservative.** It counts heap plus JVM overhead as if the heap were full; a real Velocity with a 1 GB heap used about 200 MB, while a small Paper used 0.9-1.2 GB. Real heap data from the plugins will let it plan tighter.
 
 ## Planned
 

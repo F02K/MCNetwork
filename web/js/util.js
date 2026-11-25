@@ -76,5 +76,5 @@ export function parseMb(text) {
   return m ? Number(m[1]) * (m[2].toUpperCase() === 'G' ? 1024 : 1) : 0;
 }
 
-/** What a JVM with this heap occupies in RAM (mirrors the daemon's planner): heap + max(256 MB, 15 %). */
-export const rssForHeap = (heapMb) => heapMb + Math.max(256, heapMb * 0.15);
+/** What a JVM with this heap occupies in RAM (mirrors the daemon's planner): heap + max(fixed, 15 %); fixed is 256 MB for a proxy and 512 MB for a game server. */
+export const rssForHeap = (heapMb, role = 'backend') => heapMb + Math.max(role === 'proxy' ? 256 : 512, heapMb * 0.15);

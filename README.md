@@ -69,7 +69,7 @@ Every server lives in `data/servers/<id>/`. Removing a server from the network n
 | `ram.totalMb` | RAM MCNetwork may plan with; `0` = detect (container limit or physical RAM) |
 | `ram.reserveMb` | left for the OS; `0` = 12 % of the total, at least 1 GB |
 | `memory.weight` | share of the RAM budget (default: proxy 1, backend 4) |
-| `memory.minMb` / `maxMb` | limits for the heap (defaults: proxy 256-1024, backend from 512) |
+| `memory.minMb` / `maxMb` | limits for the heap (defaults: proxy 512-1024, backend from 512) |
 | `memory.pinnedMb` | fixed heap, ignores the weight |
 | `port` / `entry` | set by the wizard: the server's Minecraft port, and whether players join it first |
 
@@ -83,7 +83,7 @@ the wizard only continues after you tick the confirmation, and only then writes 
 ## How the RAM plan works
 
 1. Budget = total RAM minus the reserve.
-2. A JVM needs more than its heap (metaspace, threads, native buffers), so a heap of `H` is counted as `H + max(256 MB, 15 %)`.
+2. A JVM needs more than its heap (metaspace, JIT, threads, native buffers), so a heap of `H` is counted as `H + max(fixed, 15 %)` with a fixed part of 256 MB for the proxy and 512 MB for game servers (measured with real Velocity and Paper).
 3. Pinned servers get exactly their size; the rest of the budget is shared by weight. A server that hits its minimum or maximum is fixed there and the others share what is left.
 4. Proxies start with their full heap; backends start with a quarter of it (`-Xms`) and grow, so the JVM can give memory back.
 5. If even the minimums do not fit, everyone gets the minimum and the plan carries a warning.
@@ -93,6 +93,10 @@ A running JVM cannot change its heap: new sizes apply at the next start of each 
 ## API and architecture
 
 See [docs/API.md](docs/API.md) for the HTTP API and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together and what is planned.
+
+## Tested with real servers
+
+The setup, the proxy connection (modern forwarding), joining through Velocity, switching servers and adding a server to a running network were verified with a real Velocity and real Paper servers. See [docs/E2E.md](docs/E2E.md).
 
 ## Development
 

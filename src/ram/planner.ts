@@ -36,22 +36,24 @@ export interface Plan {
 }
 
 export const STEP_MB = 64;
-const OVERHEAD_FIXED_MB = 256;
+/** What a JVM needs besides its heap (metaspace, JIT, threads, native buffers). Measured: Velocity ~200 MB, Paper ~500 MB or more. */
+const OVERHEAD_FIXED_MB: Record<Role, number> = { proxy: 256, backend: 512 };
 const OVERHEAD_RATIO = 0.15;
 
-/** A proxy only forwards packets: it rarely needs more than 1 GB, however big the machine is. */
+/** A proxy only forwards packets: 512 MB-1 GB is plenty (a real Velocity idled at ~200 MB RSS), however big the machine is. */
 const DEFAULTS: Record<Role, { weight: number; minMb: number; maxMb: number }> = {
-  proxy: { weight: 1, minMb: 256, maxMb: 1024 },
+  proxy: { weight: 1, minMb: 512, maxMb: 1024 },
   backend: { weight: 4, minMb: 512, maxMb: Infinity },
 };
 
-/** RAM a JVM occupies for a heap: the heap plus metaspace, threads and native buffers. */
-export const rssForHeap = (heapMb: number): number => heapMb + Math.max(OVERHEAD_FIXED_MB, heapMb * OVERHEAD_RATIO);
+/** RAM a JVM occupies for a heap: the heap plus its own overhead. */
+export const rssForHeap = (heapMb: number, role: Role = 'backend'): number => heapMb + Math.max(OVERHEAD_FIXED_MB[role], heapMb * OVERHEAD_RATIO);
 
 /** Inverse of rssForHeap. */
-export function heapForRss(rssMb: number): number {
-  const small = rssMb - OVERHEAD_FIXED_MB;
-  return small <= OVERHEAD_FIXED_MB / OVERHEAD_RATIO ? small : rssMb / (1 + OVERHEAD_RATIO);
+export function heapForRss(rssMb: number, role: Role = 'backend'): number {
+  const fixed = OVERHEAD_FIXED_MB[role];
+  const small = rssMb - fixed;
+  return small <= fixed / OVERHEAD_RATIO ? small : rssMb / (1 + OVERHEAD_RATIO);
 }
 
 export const autoReserveMb = (totalMb: number): number => Math.max(1024, Math.round(totalMb * 0.12));
@@ -84,9 +86,9 @@ export function planRam(input: PlanInput): Plan {
     const def = DEFAULTS[server.role];
     const minHeap = Math.max(m.minMb ?? def.minMb, 64);
     const pinned = m.pinnedMb;
-    const minRss = rssForHeap(pinned ?? minHeap);
+    const minRss = rssForHeap(pinned ?? minHeap, server.role);
     const maxHeap = m.maxMb ?? def.maxMb;
-    const maxRss = pinned !== undefined ? minRss : Number.isFinite(maxHeap) ? Math.max(minRss, rssForHeap(maxHeap)) : Infinity;
+    const maxRss = pinned !== undefined ? minRss : Number.isFinite(maxHeap) ? Math.max(minRss, rssForHeap(maxHeap, server.role)) : Infinity;
     return { server, weight: m.weight ?? def.weight, minRss, maxRss, rss: minRss, reason: pinned !== undefined ? 'pinned' : 'share', locked: pinned !== undefined };
   });
 
@@ -133,10 +135,10 @@ export function planRam(input: PlanInput): Plan {
     if (s.reason === 'pinned') xmx = m.pinnedMb ?? minHeap;
     else if (s.reason === 'min') xmx = minHeap;
     else if (s.reason === 'max') xmx = Math.max(m.maxMb ?? DEFAULTS[s.server.role].maxMb, minHeap);
-    else xmx = Math.min(Math.max(floorStep(heapForRss(s.rss)), minHeap), m.maxMb ?? DEFAULTS[s.server.role].maxMb);
+    else xmx = Math.min(Math.max(floorStep(heapForRss(s.rss, s.server.role)), minHeap), m.maxMb ?? DEFAULTS[s.server.role].maxMb);
     // Proxies and pinned servers start with their full heap; game servers start smaller and grow.
     const xms = s.server.role === 'proxy' || s.reason === 'pinned' ? xmx : Math.min(xmx, Math.max(256, floorStep(xmx / 4)));
-    return { id: s.server.id, xmxMb: xmx, xmsMb: xms, expectedRssMb: Math.round(rssForHeap(xmx)), reason: s.reason };
+    return { id: s.server.id, xmxMb: xmx, xmsMb: xms, expectedRssMb: Math.round(rssForHeap(xmx, s.server.role)), reason: s.reason };
   });
   const expectedRssMb = allocations.reduce((sum, a) => sum + a.expectedRssMb, 0);
   if (expectedRssMb > budgetMb + 1 && !warnings.length) warnings.push(`The plan needs ${expectedRssMb} MB but only ${Math.round(budgetMb)} MB are available.`);

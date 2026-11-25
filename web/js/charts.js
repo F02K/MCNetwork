@@ -44,13 +44,25 @@ export function stackedAreaChart({ frames, series, budgetMb }) {
     root.append(svg('text', { x: x(time), y: H - 8, 'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle' }, fmtTime(time, t1 - t0 < 20 * 60_000)));
   }
 
+  // Without data (the daemon was off) the chart stays empty instead of sloping to zero: frames far apart start a new segment.
+  const gaps = frames.slice(1).map((f, i) => f.t - frames[i].t).sort((a, b) => a - b);
+  const gapMs = Math.max(30_000, 4 * (gaps[Math.floor(gaps.length / 2)] ?? 0));
+  const segments = [];
+  frames.forEach((f, i) => {
+    if (i === 0 || f.t - frames[i - 1].t > gapMs) segments.push([]);
+    segments[segments.length - 1].push(i);
+  });
+
   // stacked areas, bottom series first; a thin surface-colored outline leaves a gap between fills
   const base = frames.map(() => 0);
   series.forEach((s, si) => {
     const top = frames.map((f, i) => base[i] + values[i][si]);
-    const up = frames.map((f, i) => `${x(f.t).toFixed(1)},${y(top[i]).toFixed(1)}`);
-    const down = frames.map((f, i) => `${x(f.t).toFixed(1)},${y(base[i]).toFixed(1)}`).reverse();
-    root.append(svg('path', { class: 'area', d: `M${up.join('L')}L${down.join('L')}Z`, fill: s.color, 'fill-opacity': 0.88 }));
+    for (const seg of segments) {
+      if (seg.length < 2) continue;
+      const up = seg.map((i) => `${x(frames[i].t).toFixed(1)},${y(top[i]).toFixed(1)}`);
+      const down = seg.map((i) => `${x(frames[i].t).toFixed(1)},${y(base[i]).toFixed(1)}`).reverse();
+      root.append(svg('path', { class: 'area', d: `M${up.join('L')}L${down.join('L')}Z`, fill: s.color, 'fill-opacity': 0.88 }));
+    }
     top.forEach((v, i) => (base[i] = v));
   });
 
@@ -72,6 +84,7 @@ export function stackedAreaChart({ frames, series, budgetMb }) {
     let best = 0;
     for (let i = 1; i < frames.length; i++) if (Math.abs(frames[i].t - time) < Math.abs(frames[best].t - time)) best = i;
     const f = frames[best];
+    if (Math.abs(f.t - time) > gapMs / 2) return hide(); // in a gap there is nothing to show
     cross.setAttribute('x1', x(f.t));
     cross.setAttribute('x2', x(f.t));
     cross.style.display = '';
