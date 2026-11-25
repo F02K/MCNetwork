@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { loadConfig, saveConfig, CONFIG_FILE } from './config';
 import { createHttpServer } from './http/server';
 import { Network } from './network';
@@ -17,7 +17,8 @@ async function main(): Promise<void> {
   saveConfig(dataDir, config); // writes the defaults on the first run so they can be edited
 
   const network = new Network(dataDir, config);
-  const http = createHttpServer(network, config.http);
+  const webDir = resolve(argValue('--web') ?? join(__dirname, '..', 'web'));
+  const http = createHttpServer(network, config.http, webDir);
   const port = await http.listen();
   console.log(`MCNetwork API on http://${config.http.host}:${port} (data: ${dataDir}, config: ${CONFIG_FILE})`);
   await network.start();

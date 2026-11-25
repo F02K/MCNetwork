@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createHttpServer } from '../src/http/server';
-import { makeNetwork, server, waitFor } from './helpers';
+import { makeNetwork, server, tmp, waitFor } from './helpers';
 
 let base = '';
 // created at file level so that its cleanup hooks belong to the whole file, not to the before() hook
@@ -19,7 +21,12 @@ async function call(method: string, path: string, body?: unknown, h: Record<stri
 }
 
 before(async () => {
-  const http = createHttpServer(net, { host: '127.0.0.1', port: 0, token: TOKEN });
+  const web = tmp('web');
+  mkdirSync(join(web, 'js'));
+  writeFileSync(join(web, 'index.html'), '<h1>dash</h1>');
+  writeFileSync(join(web, 'js', 'app.js'), 'export {}');
+  writeFileSync(join(tmp('outside'), 'secret.txt'), 'x');
+  const http = createHttpServer(net, { host: '127.0.0.1', port: 0, token: TOKEN }, web);
   const port = await http.listen();
   base = `http://127.0.0.1:${port}`;
   closeHttp = () => http.close();
@@ -112,5 +119,29 @@ describe('HTTP API', () => {
     await read(/event: status/);
     assert.match(text, /event: hello\ndata: \{"servers":2\}/);
     await reader.cancel();
+  });
+
+  it('serves the dashboard without a token, but never files outside its folder', async () => {
+    const index = await fetch(`${base}/`);
+    assert.equal(index.status, 200);
+    assert.match(index.headers.get('content-type') ?? '', /text\/html/);
+    assert.equal(await index.text(), '<h1>dash</h1>');
+    const js = await fetch(`${base}/js/app.js`);
+    assert.match(js.headers.get('content-type') ?? '', /javascript/);
+    assert.equal((await fetch(`${base}/nope.css`)).status, 401, 'unknown paths fall through to the (protected) API');
+    assert.equal((await fetch(`${base}/..%2F..%2Fetc%2Fpasswd`)).status, 401);
+    assert.equal((await fetch(`${base}/%2e%2e/%2e%2e/etc/passwd`)).status, 401);
+  });
+
+  it('exposes setup defaults and validates a setup request', async () => {
+    const defaults = (await call('GET', '/api/setup/defaults')).json as { paper: { default: string; versions: string[] }; velocity: { default: string }; ram: { totalMb: number }; configured: boolean };
+    assert.equal(defaults.paper.default, '1.21.8');
+    assert.equal(defaults.velocity.default, '3.5.1');
+    assert.ok(defaults.ram.totalMb > 0);
+    assert.equal(defaults.configured, true);
+    assert.equal((await call('GET', '/api/setup')).json, null);
+    const bad = await call('POST', '/api/setup', { backends: [{ id: 'x' }], acceptEula: false });
+    assert.equal(bad.status, 400);
+    assert.match((bad.json as { error: string }).error, /EULA/);
   });
 });

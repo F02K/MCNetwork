@@ -1,5 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { extname, join, normalize, sep } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Network } from '../network';
 import type { HttpConfig } from '../types';
@@ -32,6 +34,7 @@ function stream(net: Network, req: IncomingMessage, res: ServerResponse): void {
     ['ram', (f: unknown) => write('ram', f)],
     ['pressure', (p: unknown) => write('pressure', { level: p })],
     ['servers', () => write('servers', net.views().map((v) => v.config))],
+    ['setup', (s: unknown) => write('setup', s)],
   ];
   for (const [name, fn] of handlers) net.on(name, fn);
   write('hello', { servers: net.views().length });
@@ -42,18 +45,39 @@ function stream(net: Network, req: IncomingMessage, res: ServerResponse): void {
   });
 }
 
+const TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.json': 'application/json; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.png': 'image/png',
+};
+
+/** Serves a file of the dashboard; "/" is index.html. Never leaves the web folder. */
+function serveStatic(webDir: string, pathname: string, res: ServerResponse): boolean {
+  const rel = normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, '') || 'index.html';
+  const file = join(webDir, rel);
+  if (!file.startsWith(webDir + sep) || !existsSync(file) || !statSync(file).isFile()) return false;
+  res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+  res.end(readFileSync(file));
+  return true;
+}
+
 export interface HttpHandle {
   server: Server;
   listen(): Promise<number>;
   close(): Promise<void>;
 }
 
-export function createHttpServer(net: Network, cfg: HttpConfig): HttpHandle {
+export function createHttpServer(net: Network, cfg: HttpConfig, webDir?: string): HttpHandle {
   const table = compile(buildRoutes(net));
   const server = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? '/', 'http://localhost');
       try {
+        if (webDir && req.method === 'GET' && !url.pathname.startsWith('/api/') && serveStatic(webDir, url.pathname, res)) return;
         if (!authorized(cfg.token, req, url.searchParams)) throw new HttpError(401, 'Missing or wrong token');
         if (req.method === 'GET' && url.pathname === '/api/events') return stream(net, req, res);
         const found = match(table, req.method ?? 'GET', url.pathname);

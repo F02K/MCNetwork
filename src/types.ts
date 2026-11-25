@@ -21,6 +21,10 @@ export interface ServerConfig {
   dir: string;
   /** Start together with the network. */
   autoStart: boolean;
+  /** Minecraft port: the public port of the proxy, or the local port of a backend. */
+  port?: number;
+  /** Backends only: players join this server first (the proxy's "try" list). */
+  entry?: boolean;
   memory: MemorySettings;
 }
 

@@ -46,6 +46,19 @@ export function buildRoutes(net: Network): Route[] {
     { method: 'GET', path: `${id}/players`, handler: forward(net, 'players') },
     { method: 'GET', path: `${id}/settings`, handler: forward(net, 'settings') },
 
+    { method: 'GET', path: '/api/setup', handler: () => net.setup.state },
+    { method: 'POST', path: '/api/setup', handler: ({ body }) => guarded(() => net.setup.start(body)) },
+    {
+      method: 'GET',
+      path: '/api/setup/defaults',
+      handler: () =>
+        guarded(async () => {
+          const [paper, velocity] = await Promise.all([net.versionChoices('paper'), net.versionChoices('velocity')]);
+          const plan = net.plan();
+          return { paper, velocity, ports: { proxy: 25565 }, ram: { totalMb: plan.totalMb, reserveMb: plan.reserveMb }, configured: net.config.servers.length > 0 };
+        }),
+    },
+
     { method: 'GET', path: '/api/ram', handler: () => ({ latest: net.tracker.latest ?? net.sampleRam(), peaks24h: net.tracker.peaks(24 * 60) }) },
     { method: 'GET', path: '/api/ram/history', handler: ({ query }) => net.tracker.history(Math.min(1440, Math.max(1, Number(query.get('minutes') ?? 60))), Math.min(2000, Number(query.get('points') ?? 500))) },
     { method: 'GET', path: '/api/ram/plan', handler: () => net.plan() },

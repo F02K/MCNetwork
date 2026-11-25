@@ -49,7 +49,16 @@ export function validateServer(input: unknown, dataDir: string): ServerConfig {
   if (typeof dir !== 'string' || !insideDataDir(dataDir, dir)) throw new Error('"dir" must be a relative folder inside the data directory');
   if (s.name !== undefined && typeof s.name !== 'string') throw new Error('"name" must be a string');
   if (s.autoStart !== undefined && typeof s.autoStart !== 'boolean') throw new Error('"autoStart" must be true or false');
-  return { id: s.id, name: typeof s.name === 'string' && s.name ? s.name : s.id, role, dir, autoStart: s.autoStart !== false, memory: validateMemory(s.memory) };
+  const out: ServerConfig = { id: s.id, name: typeof s.name === 'string' && s.name ? s.name : s.id, role, dir, autoStart: s.autoStart !== false, memory: validateMemory(s.memory) };
+  if (s.port !== undefined) {
+    if (typeof s.port !== 'number' || !Number.isInteger(s.port) || s.port < 1 || s.port > 65535) throw new Error('"port" must be a whole number from 1 to 65535');
+    out.port = s.port;
+  }
+  if (s.entry !== undefined) {
+    if (typeof s.entry !== 'boolean') throw new Error('"entry" must be true or false');
+    if (s.entry) out.entry = true;
+  }
+  return out;
 }
 
 /** Reads and validates the configuration; a missing file gives the defaults. */

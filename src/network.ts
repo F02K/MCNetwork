@@ -7,6 +7,8 @@ import { parseMemoryMb, type McliStatus } from './mcli/protocol';
 import { planRam, type Plan } from './ram/planner';
 import { readSystemMemory, type Pressure, type SystemMemory } from './ram/system';
 import { RamTracker, type RamFrame } from './ram/tracker';
+import { proxyOf, writeProxyConfig } from './setup/layout';
+import { SetupRunner, type SetupOptions } from './setup/provision';
 import type { NetworkConfig, ServerConfig } from './types';
 
 const MB = 1024 * 1024;
@@ -16,6 +18,7 @@ export interface NetworkOptions {
   /** Test hooks. */
   instance?: Partial<InstanceOptions>;
   systemMemory?: () => SystemMemory;
+  setup?: SetupOptions;
 }
 
 export interface ServerView {
@@ -44,6 +47,8 @@ export class Network extends EventEmitter {
   private instances = new Map<string, McliInstance>();
   private sampleTimer: NodeJS.Timeout | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
+  readonly setup: SetupRunner;
+  private util: McliInstance | null = null;
   private pressure: Pressure = 'ok';
   private readonly readMemory: () => SystemMemory;
 
@@ -55,6 +60,8 @@ export class Network extends EventEmitter {
     super();
     this.readMemory = opts.systemMemory ?? readSystemMemory;
     this.tracker.load(join(dataDir, HISTORY_FILE));
+    this.setup = new SetupRunner(this, opts.setup);
+    this.setup.on('change', (state) => this.emit('setup', state));
   }
 
   // ------------------------------------------------------------ lifecycle
@@ -83,6 +90,7 @@ export class Network extends EventEmitter {
     for (const role of ['proxy', 'backend'] as const) {
       await Promise.all(order.filter((s) => s.role === role).map(async (s) => this.instances.get(s.id)?.disconnect()));
     }
+    await this.util?.disconnect();
     this.saveHistory();
   }
 
@@ -140,11 +148,14 @@ export class Network extends EventEmitter {
     const cfg = validateServer(input, this.dataDir);
     if (this.config.servers.some((s) => s.id === cfg.id)) throw new Error(`A server "${cfg.id}" already exists`);
     if (cfg.role === 'proxy' && this.config.servers.some((s) => s.role === 'proxy')) throw new Error('Only one proxy is supported for now');
+    const clash = cfg.port === undefined ? undefined : this.config.servers.find((s) => s.port === cfg.port);
+    if (clash) throw new Error(`Port ${cfg.port} is already used by "${clash.id}"`);
     mkdirSync(resolveServerDir(this.dataDir, cfg), { recursive: true });
     this.config.servers.push(cfg);
     saveConfig(this.dataDir, this.config);
     const inst = this.attach(cfg);
     await inst.connect().catch(() => undefined);
+    await this.syncProxy();
     this.emit('servers');
     return this.view(cfg.id);
   }
@@ -157,7 +168,43 @@ export class Network extends EventEmitter {
     this.instances.delete(id);
     this.config.servers.splice(this.config.servers.findIndex((s) => s.id === id), 1);
     saveConfig(this.dataDir, this.config);
+    await this.syncProxy();
     this.emit('servers');
+  }
+
+  /**
+   * Writes the server list into the proxy's velocity.toml and, when the proxy is running, asks it to
+   * reload. Does nothing before the proxy has been started once (the file does not exist yet).
+   */
+  async syncProxy(): Promise<boolean> {
+    const changed = writeProxyConfig(this.dataDir, this.config);
+    const proxy = proxyOf(this.config);
+    if (changed && proxy && this.instances.get(proxy.id)?.status?.state === 'running') await this.instance(proxy.id).request('command', { text: 'velocity reload' }).catch(() => undefined);
+    return changed;
+  }
+
+  // ------------------------------------------------------------ versions
+
+  /** A throwaway MCLI (no server) used to ask the download services. */
+  private async lookup<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    if (!this.util) {
+      this.util = new McliInstance('(lookup)', { dir: join(this.dataDir, '.lookup'), mcliPath: resolveMcliPath(this.dataDir, this.config), ...this.opts.instance });
+    }
+    if (this.util.connection !== 'online') await this.util.connect();
+    return this.util.request<T>(method, params, 30_000);
+  }
+
+  /** Release versions of a provider, newest first, and the one to preselect (a recommended/stable build among the newest). */
+  async versionChoices(provider: 'paper' | 'velocity'): Promise<{ default: string; versions: string[] }> {
+    const versions = await this.lookup<string[]>('versions', { provider, snapshots: false });
+    if (!versions.length) throw new Error(`No ${provider} versions available`);
+    const channels = await Promise.all(versions.slice(0, 6).map((version) => this.lookup<{ channel: string | null }>('plan', { provider, version }).then((p) => p.channel, () => null)));
+    const pick = ['RECOMMENDED', 'STABLE'].map((c) => channels.indexOf(c)).find((i) => i >= 0);
+    return { default: versions[pick ?? 0], versions };
+  }
+
+  defaultVersion(provider: 'paper' | 'velocity'): Promise<string> {
+    return this.versionChoices(provider).then((c) => c.default);
   }
 
   // ------------------------------------------------------------ RAM

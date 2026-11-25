@@ -1,5 +1,7 @@
 // A stand-in for `mcli.js --api` that speaks the same line protocol (see MCLI docs/API.md).
 // FAKE_EXIT_AT_START=1 exits immediately, FAKE_CRASH_MS=<n> exits <n> ms after "ready".
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const MB = 1024 * 1024;
@@ -8,6 +10,20 @@ let min = '1G';
 let max = '2G';
 let startedAt: number | null = null;
 const players = new Set<string>();
+let installed: string | null = 'generic'; // something is installed until install() says otherwise
+const FIX = join(__dirname, '..', '..', 'test', 'fixtures');
+
+/** What a real first start leaves behind, so the setup code has real-looking files to patch. */
+function writeFirstStartFiles(): void {
+  if (process.env.FAKE_NO_FILES) return;
+  if (installed === 'velocity') {
+    if (!existsSync('velocity.toml')) copyFileSync(join(FIX, 'velocity-3.5.1.toml'), 'velocity.toml');
+    if (!existsSync('forwarding.secret')) writeFileSync('forwarding.secret', 'fake-secret-123\n');
+  } else if (installed === 'paper' && !existsSync(join('config', 'paper-global.yml'))) {
+    mkdirSync('config', { recursive: true });
+    copyFileSync(join(FIX, 'paper-global.yml'), join('config', 'paper-global.yml'));
+  }
+}
 
 const out = (msg: unknown) => process.stdout.write(JSON.stringify(msg) + '\n');
 const setState = (s: string) => {
@@ -43,8 +59,11 @@ function handle(method: string, p: Record<string, unknown>): unknown {
       return status();
     case 'start':
       if (state !== 'stopped') return { state, problems: [] };
+      if (installed === 'paper' && !existsSync('eula.txt')) return { state, problems: [{ id: 'eula', title: 'The Minecraft EULA is not accepted', advice: 'Accept it', fatal: true }] };
+      if (!installed) return { state, problems: [{ id: 'no-server', title: 'No server found', advice: 'Install one', fatal: true }] };
       startedAt = Date.now();
       setState('starting');
+      setTimeout(writeFirstStartFiles, 100);
       setTimeout(() => setState('running'), 30);
       return { state, problems: [] };
     case 'stop':
@@ -64,6 +83,7 @@ function handle(method: string, p: Record<string, unknown>): unknown {
     }
     case 'command':
       if (state === 'stopped') return false;
+      appendFileSync('commands.log', `${String(p.text)}\n`);
       if (p.text === 'join Steve') players.add('Steve');
       return true;
     case 'logs':
@@ -71,7 +91,16 @@ function handle(method: string, p: Record<string, unknown>): unknown {
     case 'players':
       return status().players;
     case 'versions':
-      return ['1.21.8', '1.21.7'];
+      return p.provider === 'velocity' ? ['4.3.1', '3.5.1'] : ['1.21.8', '1.21.7'];
+    case 'plan':
+      return { provider: p.provider, version: p.version, build: '1', channel: p.provider === 'velocity' && p.version === '3.5.1' ? 'RECOMMENDED' : 'STABLE', javaMajor: 21, filename: 'x.jar', size: 1, display: 'x' };
+    case 'install':
+      if (p.version === '0.0') return false;
+      installed = String(p.provider);
+      return true;
+    case 'acceptEula':
+      writeFileSync('eula.txt', 'eula=true\n');
+      return true;
     case 'shutdown':
       process.exit(0);
       return true;
